@@ -1,11 +1,18 @@
-// Platanus Hack 25: Snake Game
-// Navigate the snake around the "PLATANUS HACK ARCADE" title made of blocks!
+// Debug Fighter - A developer's journey from freelancer to CEO!
+// Fight bugs and errors while climbing the corporate ladder
 
 const config = {
   type: Phaser.AUTO,
   width: 800,
   height: 600,
-  backgroundColor: '#000000',
+  backgroundColor: '#0a0a1a',
+  physics: {
+    default: 'arcade',
+    arcade: {
+      gravity: { y: 0 },
+      debug: false
+    }
+  },
   scene: {
     create: create,
     update: update
@@ -15,344 +22,1268 @@ const config = {
 const game = new Phaser.Game(config);
 
 // Game variables
-let snake = [];
-let snakeSize = 15;
-let direction = { x: 1, y: 0 };
-let nextDirection = { x: 1, y: 0 };
-let food;
+let player;
+let cursors;
+let bugs = [];
+let projectiles = []; // Player bullets/projectiles
 let score = 0;
+let health = 100;
 let scoreText;
-let titleBlocks = [];
-let gameOver = false;
-let moveTimer = 0;
-let moveDelay = 150;
+let healthText;
 let graphics;
+let spawnTimer = 0;
+let spawnDelay = 2000;
+let gameOver = false;
+let attackKey;
+let isAttacking = false;
+let attackCooldown = 0;
+let showingIntro = true;
+let introStep = 0;
+let introTimer = 0;
+let introTexts = [];
+let showingStartScreen = true;
+let startScreenTexts = [];
+let musicPlaying = false;
+let musicInterval = null;
 
-// Pixel font patterns (5x5 grid for each letter)
-const letters = {
-  P: [[1,1,1,1],[1,0,0,1],[1,1,1,1],[1,0,0,0],[1,0,0,0]],
-  L: [[1,0,0,0],[1,0,0,0],[1,0,0,0],[1,0,0,0],[1,1,1,1]],
-  A: [[0,1,1,0],[1,0,0,1],[1,1,1,1],[1,0,0,1],[1,0,0,1]],
-  T: [[1,1,1,1],[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]],
-  N: [[1,0,0,1],[1,1,0,1],[1,0,1,1],[1,0,0,1],[1,0,0,1]],
-  U: [[1,0,0,1],[1,0,0,1],[1,0,0,1],[1,0,0,1],[1,1,1,1]],
-  S: [[0,1,1,1],[1,0,0,0],[0,1,1,0],[0,0,0,1],[1,1,1,0]],
-  H: [[1,0,0,1],[1,0,0,1],[1,1,1,1],[1,0,0,1],[1,0,0,1]],
-  C: [[0,1,1,1],[1,0,0,0],[1,0,0,0],[1,0,0,0],[0,1,1,1]],
-  K: [[1,0,0,1],[1,0,1,0],[1,1,0,0],[1,0,1,0],[1,0,0,1]],
-  '2': [[1,1,1,0],[0,0,0,1],[0,1,1,0],[1,0,0,0],[1,1,1,1]],
-  '5': [[1,1,1,1],[1,0,0,0],[1,1,1,0],[0,0,0,1],[1,1,1,0]],
-  ':': [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,1,0,0],[0,0,0,0]],
-  R: [[1,1,1,0],[1,0,0,1],[1,1,1,0],[1,0,1,0],[1,0,0,1]],
-  D: [[1,1,1,0],[1,0,0,1],[1,0,0,1],[1,0,0,1],[1,1,1,0]],
-  E: [[1,1,1,1],[1,0,0,0],[1,1,1,0],[1,0,0,0],[1,1,1,1]]
-};
+// Career/Level system
+let currentLevel = 0;
+let levelScore = 0;
+let levelTargets = [400, 600, 800, 1000, 1200, 1500]; // Points needed per level
+let clients = [];
+let clientCallTimer = 0;
+let clientCallInterval = 15000; // Clients call every 15 seconds
+let levelText;
+let clientsContainer = [];
+let messageBubble = null; // Reusable message bubble for client complaints
+let messageBubbleTimer = 0;
+let promotionBubble = null; // Separate bubble for promotions
+let promotionBubbleTimer = 0;
 
-// Bold font for ARCADE (filled/solid style)
-const boldLetters = {
-  A: [[1,1,1,1,1],[1,1,0,1,1],[1,1,1,1,1],[1,1,0,1,1],[1,1,0,1,1]],
-  R: [[1,1,1,1,0],[1,1,0,1,1],[1,1,1,1,0],[1,1,0,1,1],[1,1,0,1,1]],
-  C: [[1,1,1,1,1],[1,1,0,0,0],[1,1,0,0,0],[1,1,0,0,0],[1,1,1,1,1]],
-  D: [[1,1,1,1,0],[1,1,0,1,1],[1,1,0,1,1],[1,1,0,1,1],[1,1,1,1,0]],
-  E: [[1,1,1,1,1],[1,1,0,0,0],[1,1,1,1,0],[1,1,0,0,0],[1,1,1,1,1]]
-};
+// Career progression (for story)
+const careerPath = [
+  { title: 'FREELANCER', desc: 'Working from a coffee shop...', clients: 4 },
+  { title: 'JUNIOR DEV', desc: 'First tech job, learning the ropes', clients: 3 },
+  { title: 'SENIOR DEV', desc: 'Leading projects, mentoring juniors', clients: 2 },
+  { title: 'TECH LEAD', desc: 'Architecting solutions, managing teams', clients: 2 },
+  { title: 'CTO', desc: 'Driving technical vision', clients: 1 },
+  { title: 'CEO', desc: 'The Unicorn Developer!', clients: 1 }
+];
+
+// Clients/Projects for each level
+const clientNames = [
+  // Freelancer - Real clients
+  ['Sarah (E-commerce)', 'Mike (Blog)', 'Alex (Portfolio)', 'Emma (Landing)'],
+  // Junior Dev - Projects at first company
+  ['Authentication System', 'Payment Gateway', 'User Dashboard'],
+  // Senior Dev - Major features
+  ['Mobile App', 'Microservices'],
+  // Tech Lead - Strategic projects
+  ['Cloud Migration', 'Platform Redesign'],
+  // CTO - Company-wide initiatives
+  ['Tech Strategy'],
+  // CEO - Business goals
+  ['IPO Launch']
+];
+
+// Labels for UI
+const levelLabels = [
+  'CLIENTS',      // Freelancer
+  'PROJECTS',     // Junior Dev
+  'FEATURES',     // Senior Dev
+  'INITIATIVES',  // Tech Lead
+  'STRATEGY',     // CTO
+  'GOALS'         // CEO
+];
 
 function create() {
   const scene = this;
   graphics = this.add.graphics();
-
-  // Build "PLATANUS HACK ARCADE" in cyan - centered and grid-aligned
-  // PLATANUS: 8 letters × (4 cols + 1 spacing) = 40 blocks, but last letter no spacing = 39 blocks × 15px = 585px
-  let x = Math.floor((800 - 585) / 2 / snakeSize) * snakeSize;
-  let y = Math.floor(180 / snakeSize) * snakeSize;
-  'PLATANUS'.split('').forEach(char => {
-    x = drawLetter(char, x, y, 0x00ffff);
+  
+  // Create player (developer character) - PURE MANUAL PHYSICS
+  player = {
+    x: 400,
+    y: 300,
+    width: 20,
+    height: 30,
+    speed: 200,
+    color: 0x00ff00,
+    facing: 1,
+    vx: 0,
+    vy: 0
+  };
+  
+  cursors = scene.input.keyboard.createCursorKeys();
+  attackKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+  
+  // Start screen - any key to begin
+  scene.input.keyboard.on('keydown', function startGame(e) {
+    if (showingStartScreen) {
+      showingStartScreen = false;
+      scene.input.keyboard.off('keydown', startGame);
+      
+      // Destroy all start screen texts
+      for (let txt of startScreenTexts) {
+        if (txt && txt.destroy) {
+          txt.destroy();
+        }
+      }
+      startScreenTexts = [];
+      
+      // Start background music
+      startMusic(scene);
+      
+      playTone(scene, 600, 0.15);
+    }
   });
-
-  // HACK: 4 letters × (4 cols + 1 spacing) = 20 blocks, but last letter no spacing = 19 blocks × 15px = 285px
-  x = Math.floor((800 - 285) / 2 / snakeSize) * snakeSize;
-  y = Math.floor(280 / snakeSize) * snakeSize;
-  'HACK'.split('').forEach(char => {
-    x = drawLetter(char, x, y, 0x00ffff);
+  
+  // Skip intro with SPACE (only during intro, not start screen)
+  scene.input.keyboard.on('keydown-SPACE', () => {
+    if (!showingStartScreen && showingIntro && introStep < 10) {
+      // RADICAL CLEANUP - kill all tweens and destroy all text objects
+      scene.tweens.killAll();
+      
+      // Get all children and destroy text objects (except score/health)
+      const children = scene.children.list.slice();
+      for (let child of children) {
+        if (child.type === 'Text' && child !== scoreText && child !== healthText) {
+          child.destroy();
+        }
+      }
+      
+      introTexts = [];
+      introStep = 10;
+      introTimer = 0;
+      showingIntro = false;
+      scoreText.setVisible(true);
+      healthText.setVisible(true);
+      
+      // Initialize level system NOW that intro is done
+      initLevel(scene);
+      
+      scene.add.text(400, 30, 'DEBUG FIGHTER', {
+        fontSize: '32px',
+        fontFamily: 'monospace',
+        color: '#ff00ff',
+        stroke: '#000000',
+        strokeThickness: 4
+      }).setOrigin(0.5);
+      
+      scene.add.text(400, 570, 'ARROWS: Move | SPACE: Attack', {
+        fontSize: '16px',
+        fontFamily: 'monospace',
+        color: '#666666',
+        align: 'center'
+      }).setOrigin(0.5);
+    }
   });
-
-  // ARCADE: 6 letters × (5 cols + 1 spacing) = 36 blocks, but last letter no spacing = 35 blocks × 15px = 525px
-  x = Math.floor((800 - 525) / 2 / snakeSize) * snakeSize;
-  y = Math.floor(380 / snakeSize) * snakeSize;
-  'ARCADE'.split('').forEach(char => {
-    x = drawLetter(char, x, y, 0xff00ff, true);
-  });
-
-  // Score display
-  scoreText = this.add.text(16, 16, 'Score: 0', {
-    fontSize: '24px',
-    fontFamily: 'Arial, sans-serif',
+  
+  scoreText = scene.add.text(16, 16, 'SCORE: 0', {
+    fontSize: '20px',
+    fontFamily: 'monospace',
     color: '#00ff00'
-  });
-
-  // Instructions
-  this.add.text(400, 560, 'Arrow Keys | Avoid Walls, Yourself & The Title!', {
-    fontSize: '16px',
-    fontFamily: 'Arial, sans-serif',
-    color: '#888888',
-    align: 'center'
-  }).setOrigin(0.5);
-
-  // Initialize snake (start top left)
-  snake = [
-    { x: 75, y: 60 },
-    { x: 60, y: 60 },
-    { x: 45, y: 60 }
-  ];
-
-  // Spawn initial food
-  spawnFood();
-
-  // Keyboard input
-  this.input.keyboard.on('keydown', (event) => {
-    if (gameOver && event.key === 'r') {
-      restartGame(scene);
-      return;
-    }
-
-    if (event.key === 'ArrowUp' && direction.y === 0) {
-      nextDirection = { x: 0, y: -1 };
-    } else if (event.key === 'ArrowDown' && direction.y === 0) {
-      nextDirection = { x: 0, y: 1 };
-    } else if (event.key === 'ArrowLeft' && direction.x === 0) {
-      nextDirection = { x: -1, y: 0 };
-    } else if (event.key === 'ArrowRight' && direction.x === 0) {
-      nextDirection = { x: 1, y: 0 };
-    }
-  });
-
-  playTone(this, 440, 0.1);
+  }).setVisible(false);
+  
+  healthText = scene.add.text(16, 40, 'HP: 100', {
+    fontSize: '20px',
+    fontFamily: 'monospace',
+    color: '#ff0000'
+  }).setVisible(false);
+  
+  levelText = scene.add.text(16, 64, '', {
+    fontSize: '18px',
+    fontFamily: 'monospace',
+    color: '#ffff00'
+  }).setVisible(false);
+  
+  // DON'T initialize level system here - wait until intro ends
+  // initLevel(scene);
+  
+  playTone(scene, 440, 0.1);
 }
 
-function drawLetter(char, startX, startY, color, useBold = false) {
-  const pattern = useBold ? boldLetters[char] : letters[char];
-  if (!pattern) return startX + 30;
-
-  for (let row = 0; row < pattern.length; row++) {
-    for (let col = 0; col < pattern[row].length; col++) {
-      if (pattern[row][col]) {
-        const blockX = startX + col * snakeSize;
-        const blockY = startY + row * snakeSize;
-        titleBlocks.push({ x: blockX, y: blockY, color: color });
+function update(time, delta) {
+  if (showingStartScreen) {
+    drawStartScreen(this, time);
+    return;
+  }
+  
+  if (showingIntro) {
+    updateIntro(this, delta);
+    return;
+  }
+  
+  if (gameOver) return;
+  
+  // Manual physics - reset velocity
+  player.vx = 0;
+  player.vy = 0;
+  
+  // Keyboard input
+  if (cursors.left.isDown) {
+    player.vx = -player.speed;
+    player.facing = -1;
+  } else if (cursors.right.isDown) {
+    player.vx = player.speed;
+    player.facing = 1;
+  }
+  
+  if (cursors.up.isDown) {
+    player.vy = -player.speed;
+  } else if (cursors.down.isDown) {
+    player.vy = player.speed;
+  }
+  
+  // Update position with delta time
+  player.x += player.vx * (delta / 1000);
+  player.y += player.vy * (delta / 1000);
+  
+  // Manual bounds checking
+  if (player.x < 0) player.x = 0;
+  if (player.x > 800 - player.width) player.x = 800 - player.width;
+  if (player.y < 0) player.y = 0;
+  if (player.y > 600 - player.height) player.y = 600 - player.height;
+  
+  if (attackCooldown > 0) {
+    attackCooldown -= delta;
+  }
+  
+  if (Phaser.Input.Keyboard.JustDown(attackKey) && attackCooldown <= 0) {
+    performAttack(this);
+    attackCooldown = 300;
+  }
+  
+  // Update projectiles
+  let bugsKilled = 0;
+  
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const proj = projectiles[i];
+    proj.x += proj.vx * (delta / 1000);
+    proj.y += proj.vy * (delta / 1000);
+    
+    // Remove if out of bounds
+    if (proj.x < 0 || proj.x > 800 || proj.y < 0 || proj.y > 600) {
+      projectiles.splice(i, 1);
+      continue;
+    }
+    
+    // Check collision with bugs
+    for (let j = bugs.length - 1; j >= 0; j--) {
+      const bug = bugs[j];
+      const dx = (bug.x + bug.size / 2) - proj.x;
+      const dy = (bug.y + bug.size / 2) - proj.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < bug.size / 2 + proj.size) {
+        // Hit!
+        bugs.splice(j, 1);
+        projectiles.splice(i, 1);
+        bugsKilled++;
+        playTone(this, 800, 0.08);
+        break;
       }
     }
   }
-  return startX + (pattern[0].length + 1) * snakeSize;
-}
-
-function update(_time, delta) {
-  if (gameOver) return;
-
-  moveTimer += delta;
-  if (moveTimer >= moveDelay) {
-    moveTimer = 0;
-    direction = nextDirection;
-    moveSnake(this);
+  
+  // Update score and level progress AFTER the loops
+  if (bugsKilled > 0) {
+    score += bugsKilled * 10;
+    levelScore += bugsKilled * 10;
+    scoreText.setText('SCORE: ' + score);
+    // DON'T call updateLevelProgress here - causes crash
+    // We'll check progress at the end of update instead
   }
-
+  
+  spawnTimer += delta;
+  if (spawnTimer >= spawnDelay) {
+    spawnTimer = 0;
+    spawnBug(this);
+    if (spawnDelay > 800) {
+      spawnDelay -= 50;
+    }
+  }
+  
+  for (let i = bugs.length - 1; i >= 0; i--) {
+    const bug = bugs[i];
+    
+    const dx = player.x - bug.x;
+    const dy = player.y - bug.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist > 0) {
+      bug.x += (dx / dist) * bug.speed * (delta / 1000);
+      bug.y += (dy / dist) * bug.speed * (delta / 1000);
+    }
+    
+    const px = player.x + player.width / 2;
+    const py = player.y + player.height / 2;
+    const bx = bug.x + bug.size / 2;
+    const by = bug.y + bug.size / 2;
+    const collDist = Math.sqrt((px - bx) ** 2 + (py - by) ** 2);
+    
+    if (collDist < (player.width + bug.size) / 2) {
+      health -= 5;
+      healthText.setText('HP: ' + Math.max(0, health));
+      bugs.splice(i, 1);
+      playTone(this, 200, 0.1);
+      
+      // Show angry client/boss call when taking damage!
+      showClientCall(this);
+      
+      if (health <= 0) {
+        endGame(this);
+      }
+    }
+  }
+  
+  // Update level progress at the END, safely
+  // DISABLED - causes crash when calling drawClientList
+  // if (!showingStartScreen && !showingIntro && !gameOver) {
+  //   updateLevelProgress(this);
+  // }
+  
+  // Update message bubble timer
+  if (messageBubbleTimer > 0) {
+    messageBubbleTimer -= delta;
+    if (messageBubbleTimer <= 0 && messageBubble) {
+      messageBubble.setVisible(false);
+    }
+  }
+  
+  // Update promotion bubble timer
+  if (promotionBubbleTimer > 0) {
+    promotionBubbleTimer -= delta;
+    if (promotionBubbleTimer <= 0 && promotionBubble) {
+      promotionBubble.setVisible(false);
+    }
+  }
+  
   drawGame();
 }
 
-function moveSnake(scene) {
-  const head = snake[0];
-  const newHead = {
-    x: head.x + direction.x * snakeSize,
-    y: head.y + direction.y * snakeSize
-  };
-
-  // Check wall collision
-  if (newHead.x < 0 || newHead.x >= 800 || newHead.y < 0 || newHead.y >= 600) {
-    endGame(scene);
-    return;
-  }
-
-  // Check self collision
-  for (let segment of snake) {
-    if (segment.x === newHead.x && segment.y === newHead.y) {
-      endGame(scene);
-      return;
-    }
-  }
-
-  // Check title block collision
-  for (let block of titleBlocks) {
-    if (newHead.x === block.x && newHead.y === block.y) {
-      endGame(scene);
-      return;
-    }
-  }
-
-  snake.unshift(newHead);
-
-  // Check food collision
-  if (newHead.x === food.x && newHead.y === food.y) {
-    score += 10;
-    scoreText.setText('Score: ' + score);
-    spawnFood();
-    playTone(scene, 880, 0.1);
-
-    if (moveDelay > 80) {
-      moveDelay -= 2;
-    }
-  } else {
-    snake.pop();
+function drawStartScreen(scene, time) {
+  graphics.clear();
+  graphics.fillStyle(0x0a0a1a, 1);
+  graphics.fillRect(0, 0, 800, 600);
+  
+  // Create texts only once
+  if (startScreenTexts.length === 0) {
+    // Title
+    const title = scene.add.text(400, 200, 'DEBUG FIGHTER', {
+      fontSize: '64px',
+      fontFamily: 'monospace',
+      color: '#ff00ff',
+      stroke: '#000000',
+      strokeThickness: 6,
+      fontStyle: 'bold'
+    }).setOrigin(0.5);
+    
+    // Subtitle
+    const subtitle = scene.add.text(400, 280, 'A Developer\'s Journey', {
+      fontSize: '24px',
+      fontFamily: 'monospace',
+      color: '#00ffff',
+      fontStyle: 'italic'
+    }).setOrigin(0.5);
+    
+    // Pulsing "Press Any Key" text
+    const startText = scene.add.text(400, 400, 'PRESS ANY KEY TO START', {
+      fontSize: '28px',
+      fontFamily: 'monospace',
+      color: '#ffff00'
+    }).setOrigin(0.5);
+    
+    // Animate the pulsing text
+    scene.tweens.add({
+      targets: startText,
+      alpha: { from: 1, to: 0.3 },
+      duration: 600,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+    
+    // Credits
+    const credits = scene.add.text(400, 500, 'Arrow Keys: Move | Space: Attack', {
+      fontSize: '16px',
+      fontFamily: 'monospace',
+      color: '#666666'
+    }).setOrigin(0.5);
+    
+    startScreenTexts.push(title, subtitle, startText, credits);
   }
 }
 
-function spawnFood() {
-  let valid = false;
-  let attempts = 0;
-
-  while (!valid && attempts < 100) {
-    attempts++;
-    const gridX = Math.floor(Math.random() * 53) * snakeSize;
-    const gridY = Math.floor(Math.random() * 40) * snakeSize;
-
-    // Check not on snake
-    let onSnake = false;
-    for (let segment of snake) {
-      if (segment.x === gridX && segment.y === gridY) {
-        onSnake = true;
-        break;
+function updateIntro(scene, delta) {
+  introTimer += delta;
+  
+  graphics.clear();
+  graphics.fillStyle(0x0a0a1a, 1);
+  graphics.fillRect(0, 0, 800, 600);
+  
+  // Wait for texts to finish appearing before checking for fade out
+  const allTextsReady = introTexts.length > 0 && introTexts.every(t => t.alpha >= 0.9 || !t.active);
+  
+  // Step progression with fade out
+  if (introTimer > 2000 && introStep === 0 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 1; introTimer = 0; });
+    return;
+  }
+  if (introTimer > 2500 && introStep === 1 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 2; introTimer = 0; });
+    return;
+  }
+  if (introTimer > 2500 && introStep === 2 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 3; introTimer = 0; });
+    return;
+  }
+  if (introTimer > 2500 && introStep === 3 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 4; introTimer = 0; });
+    return;
+  }
+  if (introTimer > 3500 && introStep === 4 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 5; introTimer = 0; });
+    return;
+  }
+  if (introTimer > 2500 && introStep === 5 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 6; introTimer = 0; });
+    return;
+  }
+  if (introTimer > 3000 && introStep === 6 && allTextsReady) { 
+    fadeOutIntro(scene, () => { introStep = 10; });
+    return;
+  }
+  
+  // Story sequence with animations (only create when array is empty)
+  if (introStep === 0 && introTexts.length === 0) {
+    createIntroText(scene, 'THE YEAR IS 2025...', 300, 0x00ffff, 28);
+  } else if (introStep === 1 && introTexts.length === 0) {
+    createIntroText(scene, 'You are a FREELANCER', 250, 0x00ff00, 24);
+    createIntroText(scene, 'Working from coffee shops', 300, 0x888888, 18, 200);
+    createIntroText(scene, 'Armed only with HTML, CSS & JS', 340, 0x888888, 18, 400);
+  } else if (introStep === 2 && introTexts.length === 0) {
+    createIntroText(scene, 'The tech world is full of BUGS', 250, 0xff0000, 24);
+    createIntroText(scene, 'NullPointerExceptions...', 300, 0xff6666, 18, 200);
+    createIntroText(scene, 'Memory Leaks...', 330, 0xff6666, 18, 400);
+    createIntroText(scene, 'Syntax Errors...', 360, 0xff6666, 18, 600);
+  } else if (introStep === 3 && introTexts.length === 0) {
+    createIntroText(scene, 'Your mission:', 260, 0xffff00, 24);
+    createIntroText(scene, 'Climb the corporate ladder', 310, 0xffffff, 20, 200);
+    createIntroText(scene, 'From FREELANCER to CEO', 350, 0x00ffff, 20, 400);
+  } else if (introStep === 4 && introTexts.length === 0) {
+    createCareerPathAnimated(scene);
+  } else if (introStep === 5 && introTexts.length === 0) {
+    createIntroText(scene, 'Defeat the bugs', 260, 0xff00ff, 24);
+    createIntroText(scene, 'Level up your skills', 310, 0xff00ff, 24, 200);
+    createIntroText(scene, 'Become the UNICORN DEVELOPER', 360, 0xffff00, 24, 400);
+  } else if (introStep === 6 && introTexts.length === 0) {
+    const txt = scene.add.text(400, 300, 'Press SPACE to begin your journey', {
+      fontSize: '20px',
+      fontFamily: 'monospace',
+      color: '#00ff00',
+      alpha: 0
+    }).setOrigin(0.5);
+    
+    scene.tweens.add({
+      targets: txt,
+      alpha: 1,
+      y: 300,
+      duration: 500,
+      ease: 'Power2'
+    });
+    
+    scene.tweens.add({
+      targets: txt,
+      alpha: { from: 1, to: 0.3 },
+      duration: 600,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+    
+    introTexts.push(txt);
+  } else if (introStep === 10) {
+    // RADICAL CLEANUP - destroy ALL text objects in the scene
+    scene.tweens.killAll();
+    
+    // Get all children and destroy text objects
+    const children = scene.children.list.slice();
+    for (let child of children) {
+      if (child.type === 'Text' && child !== scoreText && child !== healthText) {
+        child.destroy();
       }
     }
+    
+    introTexts = [];
+    showingIntro = false;
+    scoreText.setVisible(true);
+    healthText.setVisible(true);
+    
+    // Initialize level system NOW that intro is done
+    initLevel(scene);
+    
+    scene.add.text(400, 30, 'DEBUG FIGHTER', {
+      fontSize: '32px',
+      fontFamily: 'monospace',
+      color: '#ff00ff',
+      stroke: '#000000',
+      strokeThickness: 4
+    }).setOrigin(0.5);
+    
+    scene.add.text(400, 570, 'ARROWS: Move | SPACE: Attack', {
+      fontSize: '16px',
+      fontFamily: 'monospace',
+      color: '#666666',
+      align: 'center'
+    }).setOrigin(0.5);
+    
+    // Initialize level system
+    initLevel(scene);
+    
+    introStep = 11;
+  }
+}
 
-    // Check not on title blocks
-    let onTitle = false;
-    for (let block of titleBlocks) {
-      if (gridX === block.x && gridY === block.y) {
-        onTitle = true;
-        break;
-      }
-    }
+function createIntroText(scene, text, y, color, size, delay = 0) {
+  const txt = scene.add.text(400, y + 50, text, {
+    fontSize: size + 'px',
+    fontFamily: 'monospace',
+    color: '#' + color.toString(16).padStart(6, '0'),
+    alpha: 0
+  }).setOrigin(0.5);
+  
+  scene.tweens.add({
+    targets: txt,
+    alpha: 1,
+    y: y,
+    duration: 800,
+    delay: delay,
+    ease: 'Power2'
+  });
+  
+  introTexts.push(txt);
+}
 
-    if (!onSnake && !onTitle) {
-      food = { x: gridX, y: gridY };
-      valid = true;
+function fadeOutIntro(scene, callback) {
+  if (introTexts.length === 0) {
+    callback();
+    return;
+  }
+  
+  // Kill ALL tweens to stop any delayed animations
+  scene.tweens.killAll();
+  
+  for (let txt of introTexts) {
+    // Immediately destroy without fade animation to avoid conflicts
+    if (txt && txt.destroy) {
+      txt.destroy();
     }
   }
+  
+  introTexts = [];
+  callback();
+}
+
+function createCareerPathAnimated(scene) {
+  const startY = 180;
+  
+  const title = scene.add.text(400, startY - 20 + 50, 'YOUR CAREER PATH:', {
+    fontSize: '20px',
+    fontFamily: 'monospace',
+    color: '#ffff00',
+    alpha: 0
+  }).setOrigin(0.5);
+  
+  scene.tweens.add({
+    targets: title,
+    alpha: 1,
+    y: startY - 20,
+    duration: 600,
+    ease: 'Power2'
+  });
+  
+  introTexts.push(title);
+  
+  const colors = [0x888888, 0x00ff00, 0x00ffff, 0xff00ff, 0xff9900, 0xffff00];
+  
+  for (let i = 0; i < careerPath.length; i++) {
+    const step = careerPath[i];
+    const y = startY + 30 + i * 45;
+    const delay = i * 150 + 200;
+    
+    const num = scene.add.text(150, y + 50, (i + 1) + '.', {
+      fontSize: '16px',
+      fontFamily: 'monospace',
+      color: '#666666',
+      alpha: 0
+    });
+    
+    const titleTxt = scene.add.text(200, y + 50, step.title, {
+      fontSize: '18px',
+      fontFamily: 'monospace',
+      color: '#' + colors[i].toString(16).padStart(6, '0'),
+      fontStyle: 'bold',
+      alpha: 0
+    });
+    
+    const desc = scene.add.text(200, y + 20 + 50, step.desc, {
+      fontSize: '12px',
+      fontFamily: 'monospace',
+      color: '#888888',
+      alpha: 0
+    });
+    
+    scene.tweens.add({
+      targets: [num, titleTxt, desc],
+      alpha: 1,
+      y: '-=50',
+      duration: 600,
+      delay: delay,
+      ease: 'Power2'
+    });
+    
+    introTexts.push(num, titleTxt, desc);
+  }
+}
+
+function spawnBug(scene) {
+  const side = Math.floor(Math.random() * 4);
+  let x, y;
+  
+  if (side === 0) { // Top
+    x = Math.random() * 800;
+    y = -20;
+  } else if (side === 1) { // Right
+    x = 820;
+    y = Math.random() * 600;
+  } else if (side === 2) { // Bottom
+    x = Math.random() * 800;
+    y = 620;
+  } else { // Left
+    x = -20;
+    y = Math.random() * 600;
+  }
+  
+  const types = [
+    { name: 'BUG', color: 0xff0000, size: 15, speed: 50 },
+    { name: 'NULL', color: 0xff6600, size: 18, speed: 40 },
+    { name: 'LEAK', color: 0xffff00, size: 12, speed: 70 }
+  ];
+  
+  const type = types[Math.floor(Math.random() * types.length)];
+  
+  bugs.push({
+    x: x,
+    y: y,
+    size: type.size,
+    speed: type.speed,
+    color: type.color,
+    name: type.name
+  });
+}
+
+function performAttack(scene) {
+  // Shoot a projectile!
+  playTone(scene, 600, 0.1);
+  
+  const projectile = {
+    x: player.x + player.width / 2,
+    y: player.y + player.height / 2,
+    vx: player.facing * 400, // Speed in direction player is facing
+    vy: 0,
+    size: 5,
+    color: 0x00ffff
+  };
+  
+  projectiles.push(projectile);
+}
+
+function initLevel(scene) {
+  currentLevel = 0;
+  levelScore = 0;
+  clients = [];
+  
+  const level = careerPath[currentLevel];
+  const clientList = clientNames[currentLevel];
+  
+  for (let i = 0; i < level.clients; i++) {
+    clients.push({
+      name: clientList[i],
+      satisfied: false,
+      pointsNeeded: Math.floor(levelTargets[currentLevel] / level.clients)
+    });
+  }
+  
+  updateLevelProgress(scene);
+  drawClientList(scene);
+}
+
+function updateLevelProgress(scene) {
+  // Safety check - don't run during intro/start screen
+  if (!scene || showingStartScreen || showingIntro) return;
+  if (!levelText || clients.length === 0) return;
+  
+  const level = careerPath[currentLevel];
+  const target = levelTargets[currentLevel];
+  const progress = Math.floor((levelScore / target) * 100);
+  
+  levelText.setText(`${level.title} | ${levelScore}/${target} (${progress}%)`);
+  levelText.setVisible(true);
+  
+  const pointsPerClient = Math.floor(target / level.clients);
+  for (let i = 0; i < clients.length; i++) {
+    if (!clients[i].satisfied && levelScore >= pointsPerClient * (i + 1)) {
+      clients[i].satisfied = true;
+      // DON'T show visual - just update UI and play sound
+      drawClientList(scene);
+      playTone(scene, 800, 0.3);
+    }
+  }
+  
+  if (levelScore >= target) {
+    levelUp(scene);
+  }
+}
+
+function drawClientList(scene) {
+  // Safety check - don't run during intro/start screen
+  if (!scene || showingStartScreen || showingIntro) return;
+  if (clients.length === 0) return;
+  
+  const startX = 600;
+  const startY = 80;
+  const label = levelLabels[currentLevel];
+  
+  // Create texts ONLY if container is empty (first time only)
+  if (clientsContainer.length === 0) {
+    // Create title
+    const title = scene.add.text(startX, startY, label + ':', {
+      fontSize: '16px',
+      fontFamily: 'monospace',
+      color: '#ffff00',
+      fontStyle: 'bold'
+    });
+    clientsContainer.push(title);
+    
+    // Create text objects - create MAX we might need (6 clients max in game)
+    for (let i = 0; i < 6; i++) {
+      const y = startY + 25 + i * 30;
+      const txt = scene.add.text(startX, y, '', {
+        fontSize: '14px',
+        fontFamily: 'monospace',
+        color: '#ff6600'
+      });
+      txt.setVisible(false); // Hide by default
+      clientsContainer.push(txt);
+    }
+  }
+  
+  // Update existing texts
+  if (clientsContainer[0]) {
+    clientsContainer[0].setText(label + ':');
+  }
+  
+  // Update and show/hide client texts based on current level
+  for (let i = 0; i < 6; i++) {
+    const txtIndex = i + 1;
+    if (!clientsContainer[txtIndex]) continue;
+    
+    if (i < clients.length) {
+      const client = clients[i];
+      const statusIcon = client.satisfied ? '✓' : (currentLevel === 0 ? '📞' : '⏳');
+      const color = client.satisfied ? '#00ff00' : '#ff6600';
+      
+      clientsContainer[txtIndex].setText(`${statusIcon} ${client.name}`);
+      clientsContainer[txtIndex].setColor(color);
+      clientsContainer[txtIndex].setVisible(true);
+    } else {
+      // Hide unused text objects
+      clientsContainer[txtIndex].setVisible(false);
+    }
+  }
+}
+
+function showClientCall(scene) {
+  // Safety check
+  if (!scene || showingStartScreen || showingIntro) return;
+  
+  const unsatisfied = clients.filter(c => !c.satisfied);
+  if (unsatisfied.length === 0) return;
+  
+  // Play annoying phone sound
+  playTone(scene, 400, 0.15);
+  
+  // Messages in Spanish by career level - more variety!
+  const messagesByLevel = [
+    // FREELANCER - Desperate clients
+    [
+      '¿DÓNDE ESTÁ MI PÁGINA? 😡',
+      '¡NECESITO ESTO PARA AYER! ⏰',
+      'Mi primo lo hace más rápido... 🙄',
+      '¿Por qué tan caro? 💸',
+      'Solo es cambiar un texto... 🤦',
+      '¡El diseño está mal! 😤',
+      '¿Cuándo terminas? ⌛'
+    ],
+    // JUNIOR DEV - Demanding managers
+    [
+      'Reunión urgente en 5 min 📞',
+      'El cliente no aprobó el PR 😰',
+      '¿Ya hiciste el deploy? 🚀',
+      'Faltan los tests unitarios 🧪',
+      'Bug en producción!!! 🔥',
+      'Code review pendiente ⏳',
+      'Sprint planning ahora! 📊'
+    ],
+    // SENIOR DEV - Junior asking questions
+    [
+      '¿Cómo funciona async/await? 🤔',
+      'Ayuda con este merge conflict 🆘',
+      '¿Qué es un closure? 💭',
+      'El staging está caído 💔',
+      '¿Revisas mi código? 👀',
+      'No entiendo esta regex 😵',
+      'Pair programming? 👥'
+    ],
+    // TECH LEAD - Management pressure
+    [
+      'Necesito el roadmap HOY 📋',
+      'Presupuesto para Q2? 💰',
+      '¿Cuándo el MVP? ⏱️',
+      'Entrevista técnica a las 3 🎤',
+      'Escalabilidad del sistema? 📈',
+      'Reunión con stakeholders 🤝',
+      'Migración a microservicios? 🔧'
+    ],
+    // CTO - Board meetings
+    [
+      'Junta directiva en 10 min 👔',
+      '¿Cómo va la innovación? 💡',
+      'Inversores quieren resultados 📊',
+      '¿Cuál es la visión técnica? 🎯',
+      'KPIs del trimestre? 📈'
+    ],
+    // CEO - Everything at once
+    [
+      '¡TODO ESTÁ EN FUEGO! �🔥🔥',
+      'Crisis de relaciones públicas 📰',
+      'Inversionistas retirándose 💸',
+      '¡El competidor nos superó! 🏃',
+      'Reunión con la junta YA! 🚨'
+    ]
+  ];
+  
+  // Create message bubble if it doesn't exist
+  if (!messageBubble) {
+    messageBubble = scene.add.text(400, 100, '', {
+      fontSize: '18px',
+      fontFamily: 'monospace',
+      color: '#ff0000',
+      fontStyle: 'bold',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 10 },
+      align: 'center'
+    }).setOrigin(0.5).setVisible(false);
+  }
+  
+  // Pick random message from current level
+  const levelMessages = messagesByLevel[currentLevel] || messagesByLevel[0];
+  const randomMsg = levelMessages[Math.floor(Math.random() * levelMessages.length)];
+  
+  // Show the message
+  messageBubble.setText(randomMsg);
+  messageBubble.setVisible(true);
+  messageBubbleTimer = 2000; // Show for 2 seconds
+  
+  // Take damage
+  health -= 10;
+  if (health < 0) health = 0;
+}
+
+function showClientSatisfied(scene, clientName) {
+  // Safety check
+  if (!scene || showingStartScreen || showingIntro) return;
+  
+  // Play happy sound
+  playTone(scene, 800, 0.3);
+  
+  // Positive messages in Spanish!
+  const celebrationMessages = [
+    '¡Excelente trabajo! ⭐',
+    '¡Perfecto! 🎉',
+    '¡Cliente feliz! 😊',
+    'Deploy exitoso! 🚀',
+    '¡Bug resuelto! ✅',
+    '¡Gran trabajo! 👏',
+    '¡Código limpio! 💯',
+    '¡PR aprobado! ✨'
+  ];
+  
+  // Create or show message bubble
+  if (!messageBubble) {
+    messageBubble = scene.add.text(400, 100, '', {
+      fontSize: '18px',
+      fontFamily: 'monospace',
+      color: '#00ff00',
+      fontStyle: 'bold',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 10 },
+      align: 'center'
+    }).setOrigin(0.5).setVisible(false);
+  }
+  
+  const randomMsg = celebrationMessages[Math.floor(Math.random() * celebrationMessages.length)];
+  messageBubble.setText(randomMsg);
+  messageBubble.setColor('#00ff00'); // Green for positive
+  messageBubble.setVisible(true);
+  messageBubbleTimer = 1500; // Show for 1.5 seconds
+}
+
+function levelUp(scene) {
+  if (!scene) return;
+  
+  currentLevel++;
+  
+  if (currentLevel >= careerPath.length) {
+    winGame(scene);
+    return;
+  }
+  
+  levelScore = 0;
+  clients = [];
+  
+  const level = careerPath[currentLevel];
+  const clientList = clientNames[currentLevel];
+  
+  for (let i = 0; i < level.clients; i++) {
+    clients.push({
+      name: clientList[i],
+      satisfied: false,
+      pointsNeeded: Math.floor(levelTargets[currentLevel] / level.clients)
+    });
+  }
+  
+  // Play promotion sound
+  playTone(scene, 1000, 0.5);
+  
+  // Create promotion bubble if it doesn't exist
+  if (!promotionBubble) {
+    promotionBubble = scene.add.text(400, 300, '', {
+      fontSize: '32px',
+      fontFamily: 'monospace',
+      color: '#ffff00',
+      fontStyle: 'bold',
+      backgroundColor: '#000000',
+      padding: { x: 20, y: 15 },
+      align: 'center',
+      stroke: '#ff00ff',
+      strokeThickness: 4
+    }).setOrigin(0.5).setVisible(false);
+  }
+  
+  // Promotion messages in Spanish!
+  const promotionMessages = [
+    '¡ASCENDIDO! 🎉\n' + level.title,
+    '¡PROMOCIÓN! 🚀\n' + level.title,
+    '¡NIVEL UP! ⭐\n' + level.title,
+    '¡FELICITACIONES! 🎊\n' + level.title,
+    '¡NUEVO CARGO! 💼\n' + level.title
+  ];
+  
+  const randomPromo = promotionMessages[Math.floor(Math.random() * promotionMessages.length)];
+  promotionBubble.setText(randomPromo);
+  promotionBubble.setVisible(true);
+  promotionBubbleTimer = 3000; // Show for 3 seconds
+  
+  // Update client list
+  drawClientList(scene);
+}
+
+function winGame(scene) {
+  gameOver = true;
+  stopMusic();
+  
+  const overlay = scene.add.graphics();
+  overlay.fillStyle(0xffff00, 0.95);
+  overlay.fillRect(0, 0, 800, 600);
+  
+  const winText = scene.add.text(400, 250, 'UNICORN DEVELOPER!', {
+    fontSize: '64px',
+    fontFamily: 'monospace',
+    color: '#ff00ff',
+    stroke: '#000000',
+    strokeThickness: 6,
+    fontStyle: 'bold'
+  }).setOrigin(0.5);
+  
+  scene.add.text(400, 350, 'You conquered the tech world!', {
+    fontSize: '24px',
+    fontFamily: 'monospace',
+    color: '#000000'
+  }).setOrigin(0.5);
+  
+  scene.add.text(400, 400, `Final Score: ${score}`, {
+    fontSize: '28px',
+    fontFamily: 'monospace',
+    color: '#00ff00',
+    fontStyle: 'bold'
+  }).setOrigin(0.5);
+  
+  scene.add.text(400, 500, 'Press R to Restart', {
+    fontSize: '20px',
+    fontFamily: 'monospace',
+    color: '#666666'
+  }).setOrigin(0.5);
+  
+  scene.tweens.add({
+    targets: winText,
+    scale: { from: 1, to: 1.1 },
+    duration: 1000,
+    yoyo: true,
+    repeat: -1
+  });
+  
+  scene.input.keyboard.once('keydown-R', () => {
+    scene.scene.restart();
+    resetGame();
+  });
 }
 
 function drawGame() {
   graphics.clear();
-
-  // Draw title blocks
-  titleBlocks.forEach(block => {
-    graphics.fillStyle(block.color, 1);
-    graphics.fillRect(block.x, block.y, snakeSize - 2, snakeSize - 2);
-  });
-
-  // Draw snake
-  snake.forEach((segment, index) => {
-    if (index === 0) {
-      graphics.fillStyle(0x00ff00, 1);
-    } else {
-      graphics.fillStyle(0x00aa00, 1);
-    }
-    graphics.fillRect(segment.x, segment.y, snakeSize - 2, snakeSize - 2);
-  });
-
-  // Draw food
-  graphics.fillStyle(0xff0000, 1);
-  graphics.fillRect(food.x, food.y, snakeSize - 2, snakeSize - 2);
+  
+  graphics.fillStyle(player.color, 1);
+  graphics.fillRect(player.x, player.y, player.width, player.height);
+  
+  graphics.fillStyle(0xffffff, 1);
+  const eyeOffset = player.facing > 0 ? 12 : 4;
+  graphics.fillRect(player.x + eyeOffset, player.y + 8, 3, 3);
+  graphics.fillRect(player.x + eyeOffset, player.y + 15, 3, 3);
+  
+  // Draw projectiles (bullets)
+  for (let proj of projectiles) {
+    graphics.fillStyle(proj.color, 1);
+    graphics.fillCircle(proj.x, proj.y, proj.size);
+  }
+  
+  for (let bug of bugs) {
+    graphics.fillStyle(bug.color, 1);
+    graphics.fillRect(bug.x, bug.y, bug.size, bug.size);
+    
+    graphics.fillStyle(0x000000, 1);
+    graphics.fillRect(bug.x + 3, bug.y + 3, 2, 2);
+    graphics.fillRect(bug.x + bug.size - 5, bug.y + 3, 2, 2);
+  }
 }
 
 function endGame(scene) {
   gameOver = true;
   playTone(scene, 220, 0.5);
-
-  // Semi-transparent overlay
+  
   const overlay = scene.add.graphics();
-  overlay.fillStyle(0x000000, 0.7);
+  overlay.fillStyle(0x000000, 0.8);
   overlay.fillRect(0, 0, 800, 600);
-
-  // Game Over title with glow effect
-  const gameOverText = scene.add.text(400, 300, 'GAME OVER', {
-    fontSize: '64px',
-    fontFamily: 'Arial, sans-serif',
+  
+  const gameOverText = scene.add.text(400, 250, 'DEBUG FAILED', {
+    fontSize: '56px',
+    fontFamily: 'monospace',
     color: '#ff0000',
-    align: 'center',
-    stroke: '#ff6666',
-    strokeThickness: 8
+    stroke: '#000000',
+    strokeThickness: 6
   }).setOrigin(0.5);
-
-  // Pulsing animation for game over text
+  
   scene.tweens.add({
     targets: gameOverText,
-    scale: { from: 1, to: 1.1 },
-    alpha: { from: 1, to: 0.8 },
+    scale: { from: 1, to: 1.05 },
     duration: 800,
     yoyo: true,
-    repeat: -1,
-    ease: 'Sine.easeInOut'
+    repeat: -1
   });
-
-  // Score display
-  scene.add.text(400, 400, 'SCORE: ' + score, {
-    fontSize: '36px',
-    fontFamily: 'Arial, sans-serif',
+  
+  scene.add.text(400, 340, 'BUGS DEFEATED: ' + Math.floor(score / 10), {
+    fontSize: '28px',
+    fontFamily: 'monospace',
     color: '#00ffff',
-    align: 'center',
-    stroke: '#000000',
-    strokeThickness: 4
-  }).setOrigin(0.5);
-
-  // Restart instruction with subtle animation
-  const restartText = scene.add.text(400, 480, 'Press R to Restart', {
-    fontSize: '24px',
-    fontFamily: 'Arial, sans-serif',
-    color: '#ffff00',
-    align: 'center',
     stroke: '#000000',
     strokeThickness: 3
   }).setOrigin(0.5);
-
-  // Blinking animation for restart text
+  
+  scene.add.text(400, 380, 'FINAL SCORE: ' + score, {
+    fontSize: '28px',
+    fontFamily: 'monospace',
+    color: '#00ff00',
+    stroke: '#000000',
+    strokeThickness: 3
+  }).setOrigin(0.5);
+  
+  const restartText = scene.add.text(400, 450, 'Press R to Restart', {
+    fontSize: '20px',
+    fontFamily: 'monospace',
+    color: '#ffff00'
+  }).setOrigin(0.5);
+  
   scene.tweens.add({
     targets: restartText,
     alpha: { from: 1, to: 0.3 },
     duration: 600,
     yoyo: true,
-    repeat: -1,
-    ease: 'Sine.easeInOut'
+    repeat: -1
+  });
+  
+  scene.input.keyboard.once('keydown-R', () => {
+    scene.scene.restart();
+    resetGame();
   });
 }
 
-function restartGame(scene) {
-  snake = [
-    { x: 75, y: 60 },
-    { x: 60, y: 60 },
-    { x: 45, y: 60 }
-  ];
-  direction = { x: 1, y: 0 };
-  nextDirection = { x: 1, y: 0 };
+function resetGame() {
+  bugs = [];
+  projectiles = [];
   score = 0;
+  health = 100;
+  spawnTimer = 0;
+  spawnDelay = 2000;
   gameOver = false;
-  moveDelay = 150;
-  scoreText.setText('Score: 0');
-  spawnFood();
-  scene.scene.restart();
+  attackCooldown = 0;
+  isAttacking = false;
+  showingStartScreen = true;
+  showingIntro = true;
+  introStep = 0;
+  introTimer = 0;
+  introTexts = [];
+  startScreenTexts = [];
+  currentLevel = 0;
+  levelScore = 0;
+  clients = [];
+  clientCallTimer = 0;
+  clientsContainer = [];
+  stopMusic();
+}
+
+function startMusic(scene) {
+  if (musicPlaying) return;
+  musicPlaying = true;
+  
+  const ctx = scene.sound.context;
+  
+  // More varied melody with different sections
+  const melody = [
+    // Section A - Upbeat intro
+    523, 659, 784, 659, 523, 659, 784, 880,
+    // Section B - Descending
+    784, 659, 587, 523, 494, 440, 523, 587,
+    // Section C - Dramatic rise
+    392, 440, 494, 523, 587, 659, 698, 784,
+    // Section D - Resolution
+    880, 784, 659, 587, 523, 440, 392, 349,
+    // Section E - Variation
+    659, 523, 659, 784, 880, 784, 659, 523,
+    // Section F - Bridge
+    440, 494, 523, 587, 659, 587, 523, 494,
+    // Section G - Climax
+    784, 880, 988, 880, 784, 659, 523, 440,
+    // Section H - Return home
+    523, 494, 440, 392, 440, 494, 523, 587
+  ];
+  
+  // Bass line for harmony (octave lower)
+  const bass = [
+    262, 262, 262, 262, 330, 330, 330, 330,
+    262, 262, 262, 262, 294, 294, 294, 294,
+    196, 196, 196, 196, 247, 247, 247, 247,
+    294, 294, 294, 294, 262, 262, 262, 262,
+    330, 330, 330, 330, 349, 349, 349, 349,
+    220, 220, 220, 220, 247, 247, 247, 247,
+    262, 262, 262, 262, 330, 330, 330, 330,
+    262, 262, 262, 262, 294, 294, 294, 294
+  ];
+  
+  let noteIndex = 0;
+  const bpm = 140;
+  const beatDuration = 60000 / bpm / 2;
+  
+  function playNote() {
+    if (!musicPlaying) return;
+    
+    // Melody oscillator
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    
+    // Add variation in waveform
+    const waveTypes = ['square', 'triangle', 'sawtooth'];
+    const section = Math.floor(noteIndex / 16) % 3;
+    osc1.type = waveTypes[section];
+    
+    osc1.frequency.value = melody[noteIndex];
+    gain1.gain.setValueAtTime(0.025, ctx.currentTime);
+    gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    
+    osc1.start(ctx.currentTime);
+    osc1.stop(ctx.currentTime + 0.15);
+    
+    // Bass oscillator (plays every other note for rhythm)
+    if (noteIndex % 2 === 0) {
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      
+      osc2.type = 'triangle';
+      osc2.frequency.value = bass[noteIndex];
+      gain2.gain.setValueAtTime(0.015, ctx.currentTime);
+      gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+      
+      osc2.start(ctx.currentTime);
+      osc2.stop(ctx.currentTime + 0.2);
+    }
+    
+    // Add percussion on certain beats
+    if (noteIndex % 4 === 0) {
+      const perc = ctx.createOscillator();
+      const percGain = ctx.createGain();
+      perc.connect(percGain);
+      percGain.connect(ctx.destination);
+      
+      perc.type = 'square';
+      perc.frequency.value = 80;
+      percGain.gain.setValueAtTime(0.02, ctx.currentTime);
+      percGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+      
+      perc.start(ctx.currentTime);
+      perc.stop(ctx.currentTime + 0.05);
+    }
+    
+    noteIndex = (noteIndex + 1) % melody.length;
+  }
+  
+  playNote();
+  musicInterval = setInterval(playNote, beatDuration);
+}
+
+function stopMusic() {
+  musicPlaying = false;
+  if (musicInterval) {
+    clearInterval(musicInterval);
+    musicInterval = null;
+  }
 }
 
 function playTone(scene, frequency, duration) {
   const audioContext = scene.sound.context;
   const oscillator = audioContext.createOscillator();
   const gainNode = audioContext.createGain();
-
+  
   oscillator.connect(gainNode);
   gainNode.connect(audioContext.destination);
-
+  
   oscillator.frequency.value = frequency;
   oscillator.type = 'square';
-
+  
   gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
-
+  
   oscillator.start(audioContext.currentTime);
   oscillator.stop(audioContext.currentTime + duration);
 }
