@@ -1,4 +1,4 @@
-// Broke Bonez - carreras laterales con acrobacias
+// Broke Bonez
 const config = {
   type: Phaser.AUTO,
   width: 800,
@@ -8,45 +8,14 @@ const config = {
 };
 const game = new Phaser.Game(config);
 
-// Estados del juego
-let gameState = 'menu'; // 'menu', 'competition', '1v1', 'gameOver', 'enterName', 'leaderboard', '1v1end', '1v1ready'
-let gameMode = ''; // 'competition' o '1v1'
-
-// Estado global
-let g; // graphics
-let txt; // HUD score
-let speedTxt; // indicador de velocidad
-let boredTimerTxt; // temporizador de aburrimiento
-let dayTimeTxt; // indicador de fase del día
-let curs;
-let keyBoost;
-let keyR;
-let keyO; // Tecla de salto pequeño
-// Teclas de acrobacias
-let keyJ, keyK, keyL, keyU, keyI;
-// Teclas de menú
-let key1, key2, keyEnter;
-let sceneRef; // referencia de escena para audio
-let score = 0;
-let gameOver = false;
-let floatingTexts = []; // textos flotantes de puntos
-let judgeScores = []; // calificaciones de jueces
-let clouds = []; // nubes
-let airParticles = []; // partículas de aire
-let trickEffects = []; // efectos visuales de acrobacias
-
-// Modo 1v1
-let player1Score = 0;
-let player2Score = 0;
-let player1Lives = 3;
-let player2Lives = 3;
-let currentPlayer = 1; // 1 o 2
-let turnJustStarted = false;
-let previousPlayerScore = 0; // Puntuación del jugador anterior
-let winner = 0; // Ganador del 1v1
-let gameOverReason = ''; // Razón del game over
-
-// Sistema de leaderboard - empieza vacío
+let gameState = 'menu';
+let gameMode = '';
+let g, txt, speedTxt, boredTimerTxt, dayTimeTxt, curs, keyBoost, keyR, keyO;
+let keyJ, keyK, keyL, keyU, keyI, key1, key2, keyEnter;
+let sceneRef, score = 0, gameOver = false;
+let floatingTexts = [], judgeScores = [], clouds = [], airParticles = [], trickEffects = [];
+let player1Score = 0, player2Score = 0, player1Lives = 3, player2Lives = 3;
+let currentPlayer = 1, turnJustStarted = false, previousPlayerScore = 0, winner = 0, gameOverReason = '';
 let leaderboard = [];
 let playerName = 'AAAAA'; // Nombre empieza en AAAAA
 let nameChars = ['A', 'A', 'A', 'A', 'A']; // Array de caracteres individuales
@@ -77,52 +46,29 @@ let lastScoreTime = 0; // Último momento en que se ganaron puntos
 let crowdBoredLimit = 7; // Segundos sin ganar puntos para perder
 let crowdBoredWarning = false; // Si se está mostrando advertencia
 
-// Rampas
-let ramps = [];
-let nextRampWX = 600; // próxima rampa en coordenadas de mundo (x + scroll)
-// Obstáculos
-let drones = []; // Drones en el aire
-let obstacles = []; // Obstáculos en el suelo (carros, plataformas)
-let hoops = []; // Aros para pasar por el medio
-let spikes = []; // Púas en el suelo
-let nextDroneWX = 800;
-let nextObstacleWX = 1200;
-let nextHoopWX = 1500;
-let nextSpikeWX = 1000; // Próxima púa
-let lastTime = 0;
-let scene; // referencia a la escena para crear textos
-let bgMusic; // música de fondo
+let ramps = [], nextRampWX = 600;
+let drones = [], obstacles = [], hoops = [], spikes = [];
+let nextDroneWX = 800, nextObstacleWX = 1200, nextHoopWX = 1500, nextSpikeWX = 1000;
+let lastTime = 0, scene, bgMusic;
 
 function create() {
   scene = this;
   g = this.add.graphics();
-  // Referencia ligera a la escena sólo para audio; alternativa: pasar 'this' siempre.
-  sceneRef = null; // evitamos guardar 'this' para cumplir regla; usaremos this directo en beep cuando sea necesario.
+  sceneRef = null;
   curs = this.input.keyboard.createCursorKeys();
   keyBoost = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
   keyR = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
-  
-  // Teclas de acrobacias
   keyJ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
   keyK = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
   keyL = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L);
   keyU = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.U);
   keyI = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.I);
-  
-  // Teclas de menú
   key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
   key2 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO);
   keyEnter = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
-  
-  // Teclas para navegación de nombre (J y K en vez de X y Z para arcade)
   keyX = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
   keyZ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
-  
-  // Tecla de salto pequeño
   keyO = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.O);
-  
-  // Entrada de texto para nombre (ya no se usa keyboard.on)
-  // this.input.keyboard.on('keydown', handleNameInput);
   
   // HUD mejorado - Panel de puntos
   this.add.rectangle(100, 22, 180, 40, 0x000000, 0.6);
@@ -1717,39 +1663,17 @@ function drawMenu() {
   if (!g || !scene) return;
   g.clear();
   
-  // Fondo degradado más dramático (oscuro arriba, brillante abajo)
   g.fillGradientStyle(0x1a0033, 0x1a0033, 0xff6600, 0xff6600, 1);
   g.fillRect(0, 0, 800, 600);
   
-  // Estrellas decorativas en el fondo
-  for (let i = 0; i < 30; i++) {
-    const x = (i * 73) % 800;
-    const y = (i * 47) % 300;
+  for (let i = 0; i < 20; i++) {
     g.fillStyle(0xffffff, 0.3 + Math.random() * 0.3);
-    g.fillCircle(x, y, 1 + Math.random() * 2);
+    g.fillCircle((i * 73) % 800, (i * 47) % 300, 1 + Math.random() * 2);
   }
   
-  // Barra decorativa superior
   g.fillStyle(0x000000, 0.5);
   g.fillRect(0, 0, 800, 60);
   
-  // Llamas decorativas en los laterales
-  const flameTime = Date.now() / 100;
-  for (let side of [-1, 1]) {
-    const baseX = side === -1 ? 50 : 750;
-    for (let i = 0; i < 5; i++) {
-      const flameY = 200 + i * 80 + Math.sin(flameTime + i) * 10;
-      const flameSize = 20 + Math.sin(flameTime * 2 + i) * 8;
-      g.fillStyle(0xff6600, 0.6);
-      g.fillCircle(baseX, flameY, flameSize);
-      g.fillStyle(0xffaa00, 0.8);
-      g.fillCircle(baseX, flameY - 5, flameSize * 0.7);
-      g.fillStyle(0xffff00, 0.5);
-      g.fillCircle(baseX, flameY - 10, flameSize * 0.4);
-    }
-  }
-  
-  // Sombra del título
   const titleShadow = scene.add.text(405, 105, 'BROKE BONEZ', {
     fontFamily: 'Arial Black',
     fontSize: '84px',
@@ -1759,7 +1683,6 @@ function drawMenu() {
   titleShadow.setOrigin(0.5);
   scene.time.delayedCall(16, () => titleShadow.destroy());
   
-  // Título principal con efecto metálico
   const title = scene.add.text(400, 100, 'BROKE BONEZ', {
     fontFamily: 'Arial Black',
     fontSize: '84px',
@@ -1770,18 +1693,7 @@ function drawMenu() {
   title.setOrigin(0.5);
   scene.time.delayedCall(16, () => title.destroy());
   
-  // Brillo en el título
-  const titleShine = scene.add.text(400, 100, 'BROKE BONEZ', {
-    fontFamily: 'Arial Black',
-    fontSize: '84px',
-    color: '#FFFFFF',
-    alpha: 0.3
-  });
-  titleShine.setOrigin(0.5);
-  scene.time.delayedCall(16, () => titleShine.destroy());
-  
-  // Subtítulo con efecto neón
-  const subtitle = scene.add.text(400, 185, '⚡ EXTREME MOTORCYCLE STUNTS ⚡', {
+  const subtitle = scene.add.text(400, 185, '⚡ EXTREME STUNTS ⚡', {
     fontFamily: 'Arial Black',
     fontSize: '22px',
     color: '#00FFFF',
@@ -1791,30 +1703,20 @@ function drawMenu() {
   subtitle.setOrigin(0.5);
   scene.time.delayedCall(16, () => subtitle.destroy());
   
-  // Calavera decorativa (símbolo del juego)
   const skull = scene.add.text(400, 230, '💀', {
     fontSize: '48px'
   });
   skull.setOrigin(0.5);
   scene.time.delayedCall(16, () => skull.destroy());
   
-  // === OPCIÓN 1: COMPETICIÓN ===
-  // Fondo con sombra
   g.fillStyle(0x000000, 0.3);
   g.fillRoundedRect(155, 295, 490, 90, 15);
-  
-  // Botón principal
   g.fillStyle(0xff3333, 1);
   g.fillRoundedRect(150, 290, 490, 90, 15);
-  
-  // Borde brillante
   g.lineStyle(5, 0xffaa00, 1);
   g.strokeRoundedRect(150, 290, 490, 90, 15);
   
-  // Ícono de trofeo
-  const trophy1 = scene.add.text(180, 325, '🏆', {
-    fontSize: '42px'
-  });
+  const trophy1 = scene.add.text(180, 325, '🏆', { fontSize: '42px' });
   trophy1.setOrigin(0.5);
   scene.time.delayedCall(16, () => trophy1.destroy());
   
@@ -1838,23 +1740,14 @@ function drawMenu() {
   opt1desc.setOrigin(0.5);
   scene.time.delayedCall(16, () => opt1desc.destroy());
   
-  // === OPCIÓN 2: 1 VS 1 ===
-  // Fondo con sombra
   g.fillStyle(0x000000, 0.3);
   g.fillRoundedRect(155, 415, 490, 90, 15);
-  
-  // Botón principal
   g.fillStyle(0x0066ff, 1);
   g.fillRoundedRect(150, 410, 490, 90, 15);
-  
-  // Borde brillante
   g.lineStyle(5, 0x00ccff, 1);
   g.strokeRoundedRect(150, 410, 490, 90, 15);
   
-  // Íconos de jugadores
-  const player1Icon = scene.add.text(180, 445, '🏍️', {
-    fontSize: '38px'
-  });
+  const player1Icon = scene.add.text(180, 445, '🏍️', { fontSize: '38px' });
   player1Icon.setOrigin(0.5);
   scene.time.delayedCall(16, () => player1Icon.destroy());
   
@@ -1868,9 +1761,7 @@ function drawMenu() {
   vsText.setOrigin(0.5);
   scene.time.delayedCall(16, () => vsText.destroy());
   
-  const player2Icon = scene.add.text(615, 460, '🏍️', {
-    fontSize: '38px'
-  });
+  const player2Icon = scene.add.text(615, 460, '🏍️', { fontSize: '38px' });
   player2Icon.setOrigin(0.5);
   scene.time.delayedCall(16, () => player2Icon.destroy());
   
