@@ -16,9 +16,12 @@ let gameMode = ''; // 'competition' o '1v1'
 let g; // graphics
 let txt; // HUD score
 let speedTxt; // indicador de velocidad
+let boredTimerTxt; // temporizador de aburrimiento
+let dayTimeTxt; // indicador de fase del día
 let curs;
 let keyBoost;
 let keyR;
+let keyO; // Tecla de salto pequeño
 // Teclas de acrobacias
 let keyJ, keyK, keyL, keyU, keyI;
 // Teclas de menú
@@ -39,6 +42,9 @@ let player1Lives = 3;
 let player2Lives = 3;
 let currentPlayer = 1; // 1 o 2
 let turnJustStarted = false;
+let previousPlayerScore = 0; // Puntuación del jugador anterior
+let winner = 0; // Ganador del 1v1
+let gameOverReason = ''; // Razón del game over
 
 // Sistema de leaderboard - empieza vacío
 let leaderboard = [];
@@ -53,9 +59,36 @@ let keyX, keyZ;
 const bike = { x: 200, y: 400, vy: 0, ang: 0, vang: 0, speed: 200, air: false, flipA: 0, flips: 0, boostT: 0, cooldown: 0, hasTakenOff: false, lastTrick: '', trickCooldown: 0 };
 const phys = { g: 900, maxSpeed: 500, minSpeed: 100, accel: 120, airDrag: 0.995, rotAccel: 1.2, rotDamp: 0.92 };
 const track = { base: 470, amp: 0, k: 0.006, scroll: 0 };
+
+// Mecánica del viento
+let windForce = 0; // Fuerza del viento (-1 a 1)
+let windDirection = 1; // 1 = derecha, -1 = izquierda
+let nextWindChange = 0; // Tiempo hasta próximo cambio de viento
+let windActive = false; // Si el viento está activo
+let gameTime = 0; // Tiempo total de juego en segundos
+
+// Ciclo día/noche
+let timeOfDay = 'day'; // 'day', 'afternoon', 'night'
+let skyColor = 0x76c7ff; // Color del cielo (cambia con el tiempo)
+let dayDuration = 45; // Segundos por fase (día, tarde, noche)
+
+// Mecánica de aburrimiento de la afición
+let lastScoreTime = 0; // Último momento en que se ganaron puntos
+let crowdBoredLimit = 7; // Segundos sin ganar puntos para perder
+let crowdBoredWarning = false; // Si se está mostrando advertencia
+
 // Rampas
 let ramps = [];
 let nextRampWX = 600; // próxima rampa en coordenadas de mundo (x + scroll)
+// Obstáculos
+let drones = []; // Drones en el aire
+let obstacles = []; // Obstáculos en el suelo (carros, plataformas)
+let hoops = []; // Aros para pasar por el medio
+let spikes = []; // Púas en el suelo
+let nextDroneWX = 800;
+let nextObstacleWX = 1200;
+let nextHoopWX = 1500;
+let nextSpikeWX = 1000; // Próxima púa
 let lastTime = 0;
 let scene; // referencia a la escena para crear textos
 let bgMusic; // música de fondo
@@ -81,9 +114,12 @@ function create() {
   key2 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO);
   keyEnter = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
   
-  // Teclas para navegación de nombre
-  keyX = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.X);
-  keyZ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
+  // Teclas para navegación de nombre (J y K en vez de X y Z para arcade)
+  keyX = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
+  keyZ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
+  
+  // Tecla de salto pequeño
+  keyO = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.O);
   
   // Entrada de texto para nombre (ya no se usa keyboard.on)
   // this.input.keyboard.on('keydown', handleNameInput);
@@ -111,6 +147,30 @@ function create() {
   });
   speedTxt.setOrigin(0.5);
   speedTxt.setVisible(false);
+  
+  // Contador de aburrimiento (debajo de puntos)
+  this.add.rectangle(100, 60, 180, 35, 0x000000, 0.6);
+  boredTimerTxt = this.add.text(100, 60, 'Tiempo: 7s', { 
+    fontFamily: 'Arial', 
+    fontSize: '18px', 
+    color: '#00FF00',
+    stroke: '#000',
+    strokeThickness: 3
+  });
+  boredTimerTxt.setOrigin(0.5);
+  boredTimerTxt.setVisible(false);
+  
+  // Indicador de fase del día (debajo de velocidad)
+  this.add.rectangle(700, 60, 160, 35, 0x000000, 0.6);
+  dayTimeTxt = this.add.text(700, 60, 'Día', { 
+    fontFamily: 'Arial', 
+    fontSize: '18px', 
+    color: '#FFDD44',
+    stroke: '#000',
+    strokeThickness: 3
+  });
+  dayTimeTxt.setOrigin(0.5);
+  dayTimeTxt.setVisible(false);
   
   // Instrucciones (ocultas inicialmente)
   const instTxt1 = this.add.text(400, 16, '←/→ inclinar | ESPACIO turbo | R reiniciar', { fontFamily: 'monospace', fontSize: '14px', color: '#fff', stroke: '#000', strokeThickness: 2 }).setOrigin(0.5);
@@ -172,8 +232,14 @@ function update(t, dt) {
   
   inputTilt(s);
   handleTricks.call(this, s);
+  handleJump(s); // Salto pequeño con O
   applyBoost.call(this, s);
   physicsStep(s);
+  updatePigeons();
+  updateObstacles();
+  updateHoops();
+  updateSpikes(); // Actualizar púas
+  checkCollisions.call(this);
   scoringStep.call(this, s);
   updateFloatingTexts(s);
   updateJudgeScores(s);
@@ -181,6 +247,9 @@ function update(t, dt) {
   updateAirParticles(s);
   updateTrickEffects(s);
   updateHUD();
+  updateWind(s);
+  updateDayNightCycle(s);
+  checkCrowdBored.call(this, s);
   draw();
 }
 
@@ -196,14 +265,34 @@ function handleMenuInput() {
 function startCompetitionMode() {
   gameState = 'competition';
   gameMode = 'competition';
+  // Detener música anterior
+  stopBackgroundMusic();
+  // Selección aleatoria con 25% de probabilidad para cada una
+  const rand = Math.random();
+  if (rand < 0.25) selectedMelody = 0;
+  else if (rand < 0.5) selectedMelody = 1;
+  else if (rand < 0.75) selectedMelody = 2;
+  else selectedMelody = 3;
   resetGameState();
+  // Iniciar nueva música con la melodía seleccionada
+  startBackgroundMusic(scene);
   txt.setVisible(true);
   speedTxt.setVisible(true);
+  boredTimerTxt.setVisible(true);
+  dayTimeTxt.setVisible(true);
 }
 
 function start1v1Mode() {
   gameState = '1v1';
   gameMode = '1v1';
+  // Detener música anterior
+  stopBackgroundMusic();
+  // Selección aleatoria con 25% de probabilidad para cada una
+  const rand = Math.random();
+  if (rand < 0.25) selectedMelody = 0;
+  else if (rand < 0.5) selectedMelody = 1;
+  else if (rand < 0.75) selectedMelody = 2;
+  else selectedMelody = 3;
   player1Score = 0;
   player2Score = 0;
   player1Lives = 3;
@@ -211,8 +300,12 @@ function start1v1Mode() {
   currentPlayer = 1;
   turnJustStarted = true;
   resetGameState();
+  // Iniciar nueva música con la melodía seleccionada
+  startBackgroundMusic(scene);
   txt.setVisible(true);
   speedTxt.setVisible(true);
+  boredTimerTxt.setVisible(true);
+  dayTimeTxt.setVisible(true);
 }
 
 function resetGameState() {
@@ -232,13 +325,63 @@ function resetGameState() {
   bike.hasTakenOff = false;
   bike.lastTrick = '';
   bike.trickCooldown = 0;
+  bike.jumpCooldown = 0; // Cooldown para salto pequeño
   track.scroll = 0;
   ramps = [];
   nextRampWX = 600;
+  drones = [];
+  obstacles = [];
+  hoops = [];
+  spikes = []; // Resetear púas
+  nextDroneWX = 800;
+  nextObstacleWX = 1200;
+  nextHoopWX = 1500;
+  nextSpikeWX = 1000; // Resetear posición de próxima púa
   floatingTexts = [];
   judgeScores = [];
   trickEffects = [];
   txt.setText('PUNTOS: 0');
+  
+  // Resetear mecánica del viento
+  windForce = 0;
+  windDirection = 1;
+  nextWindChange = 5 + Math.random() * 5; // Primer viento en 5-10 seg
+  windActive = false;
+  
+  // Resetear ciclo día/noche
+  gameTime = 0;
+  timeOfDay = 'day';
+  skyColor = 0x76c7ff;
+  if (scene && scene.cameras && scene.cameras.main) {
+    scene.cameras.main.setBackgroundColor(skyColor);
+  }
+  
+  // Resetear mecánica de aburrimiento
+  lastScoreTime = 0;
+  crowdBoredWarning = false;
+}
+
+function resetBikePosition() {
+  bike.x = 200;
+  bike.y = 400;
+  bike.vy = 0;
+  bike.ang = 0;
+  bike.vang = 0;
+  bike.speed = 200;
+  bike.air = false;
+  bike.flipA = 0;
+  bike.flips = 0;
+  bike.boostT = 0;
+  bike.hasTakenOff = false;
+  track.scroll = 0;
+  ramps = [];
+  nextRampWX = 600;
+  drones = [];
+  obstacles = [];
+  hoops = [];
+  nextDroneWX = 800;
+  nextObstacleWX = 1200;
+  nextHoopWX = 1500;
 }
 
 function handleGameOver() {
@@ -273,7 +416,7 @@ function handleGameOver() {
 function handleNameInput() {
   if (!nameInputActive) return;
   
-  // X: avanzar letra (A->B->C...->Z->A)
+  // J: avanzar letra (A->B->C...->Z->A)
   if (Phaser.Input.Keyboard.JustDown(keyX)) {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789';
     const currentChar = nameChars[currentCharIndex];
@@ -284,7 +427,7 @@ function handleNameInput() {
     beep(scene, 800, 0.05);
   }
   
-  // Z: retroceder letra (Z->Y->X...->A->Z)
+  // K: retroceder letra (Z->Y->X...->A->Z)
   if (Phaser.Input.Keyboard.JustDown(keyZ)) {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789';
     const currentChar = nameChars[currentCharIndex];
@@ -322,6 +465,7 @@ function addToLeaderboard(name, points) {
 
 function handleLeaderboardInput() {
   if (Phaser.Input.Keyboard.JustDown(keyEnter)) {
+    stopBackgroundMusic(); // Detener música al volver al menú
     gameState = 'menu';
     txt.setVisible(false);
     speedTxt.setVisible(false);
@@ -337,11 +481,14 @@ function handle1v1ReadyInput() {
     gameState = '1v1';
     txt.setVisible(true);
     speedTxt.setVisible(true);
+    boredTimerTxt.setVisible(true);
+    dayTimeTxt.setVisible(true);
   }
 }
 
 function handle1v1EndInput() {
   if (Phaser.Input.Keyboard.JustDown(keyEnter)) {
+    stopBackgroundMusic(); // Detener música al volver al menú
     gameState = 'menu';
     txt.setVisible(false);
     speedTxt.setVisible(false);
@@ -399,6 +546,18 @@ function physicsStep(s) {
       bike.y += bike.vy * s;
       bike.ang += bike.vang * s;
       bike.vang *= phys.airDrag;
+      
+      // Mecánica del viento - empuja al corredor en el aire
+      if (windActive && windForce !== 0) {
+        // El viento empuja horizontalmente (afecta la rotación)
+        const windEffect = windForce * windDirection * 0.8; // Intensidad del viento
+        bike.vang += windEffect * s;
+        
+        // También puede empujar ligeramente en vertical (turbulencia)
+        if (Math.abs(windForce) > 0.5) {
+          bike.vy += windEffect * 30 * s;
+        }
+      }
 
       // Aterrizaje
       if (bike.y >= groundY) {
@@ -429,7 +588,7 @@ function physicsStep(s) {
 
 // Actualizar HUD
 function updateHUD() {
-  if (!txt || !speedTxt) return;
+  if (!txt || !speedTxt || !boredTimerTxt || !dayTimeTxt) return;
   
   // Actualizar velocidad con color dinámico
   const kmh = Math.floor(bike.speed);
@@ -455,24 +614,63 @@ function updateHUD() {
   speedTxt.setColor(color);
   speedTxt.setFontSize(fontSize);
   speedTxt.setStroke(stroke, 3);
+  
+  // Actualizar contador de aburrimiento
+  const timeSinceLastScore = gameTime - lastScoreTime;
+  const timeRemaining = Math.max(0, crowdBoredLimit - timeSinceLastScore);
+  let boredColor = '#00FF00'; // Verde (seguro)
+  
+  if (timeRemaining <= 3) boredColor = '#FF0000'; // Rojo (crítico)
+  else if (timeRemaining <= 5) boredColor = '#FFAA00'; // Naranja (advertencia)
+  
+  boredTimerTxt.setText('Tiempo: ' + Math.ceil(timeRemaining) + 's');
+  boredTimerTxt.setColor(boredColor);
+  
+  // Actualizar indicador de fase del día
+  let dayPhase = '';
+  let dayColor = '#FFDD44';
+  const timeInPhase = gameTime % dayDuration;
+  const timeToNextPhase = Math.ceil(dayDuration - timeInPhase);
+  
+  if (timeOfDay === 'day') {
+    dayPhase = 'Día → Tarde: ' + timeToNextPhase + 's';
+    dayColor = '#FFDD44'; // Amarillo
+  } else if (timeOfDay === 'afternoon') {
+    dayPhase = 'Tarde → Noche: ' + timeToNextPhase + 's';
+    dayColor = '#FF9966'; // Naranja
+  } else {
+    dayPhase = 'Noche: ' + Math.floor(gameTime) + 's';
+    dayColor = '#9999FF'; // Azul claro
+  }
+  
+  dayTimeTxt.setText(dayPhase);
+  dayTimeTxt.setColor(dayColor);
 }
 
 function scoringStep(s) {
+    const previousScore = score;
+    
     // Aire = puntos por tiempo en el aire
     if (bike.air) {
       score += Math.floor(10 * s);
-      // Flips completos
+      // Flips completos (360°)
       bike.flipA += bike.vang * s;
       const full = Math.floor(Math.abs(bike.flipA) / (Math.PI * 2));
       if (full > bike.flips) {
         bike.flips = full;
-        const pts = 150;
+        const pts = 50; // Cambio: 360° = 50 puntos (antes era 150)
         score += pts;
         showFloatingText('+' + pts, bike.x, bike.y - 40);
         txt.setText('PUNTOS: ' + score);
         beep(this, 880, 0.08);
       }
     }
+    
+    // Actualizar tiempo si se ganaron puntos
+    if (score > previousScore) {
+      lastScoreTime = gameTime;
+    }
+    
     txt.setText('PUNTOS: ' + score);
   }
 
@@ -488,6 +686,7 @@ function handleTricks(s) {
   let trickPoints = 0;
   let trickColor = 0xffffff;
   let trickPose = '';
+  let trickAction = null; // Acción especial del truco
   
   // Verificar que las teclas estén presionadas (simplificado para detección)
   const jDown = keyJ.isDown;
@@ -496,51 +695,70 @@ function handleTricks(s) {
   const uDown = keyU.isDown;
   const iDown = keyI.isDown;
   
-  // Combo 1: J+K = "Superman" (brazos extendidos)
+  // Combo 1: K+J = "Dash Left" (teletransporte a izquierda)
   if (jDown && kDown && !lDown && !uDown && !iDown) {
-    trickName = 'SUPERMAN!';
+    trickName = 'DASH LEFT!';
     trickPoints = 250;
     trickColor = 0xff0000;
-    trickPose = 'superman';
+    trickPose = 'dashleft';
+    trickAction = 'dashleft';
     bike.trickCooldown = 1.5;
   }
-  // Combo 2: K+L = "No Hander" (sin manos)
+  // Combo 2: K+L = "Dash Right" (teletransporte a derecha)
   else if (!jDown && kDown && lDown && !uDown && !iDown) {
-    trickName = 'NO HANDER!';
+    trickName = 'DASH RIGHT!';
     trickPoints = 200;
     trickColor = 0x00ff00;
-    trickPose = 'nohander';
+    trickPose = 'dashright';
+    trickAction = 'dashright';
     bike.trickCooldown = 1.5;
   }
-  // Combo 3: J+L = "Can Can" (pierna al lado)
+  // Combo 3: J+L = "Ground Slam" (bajar rápidamente)
   else if (jDown && !kDown && lDown && !uDown && !iDown) {
-    trickName = 'CAN CAN!';
+    trickName = 'GROUND SLAM!';
     trickPoints = 220;
     trickColor = 0x00ffff;
-    trickPose = 'cancan';
+    trickPose = 'groundslam';
+    trickAction = 'groundslam';
     bike.trickCooldown = 1.5;
   }
-  // Combo 4: U+I = "Bar Hop" (salto sobre manubrio)
-  else if (!jDown && !kDown && !lDown && uDown && iDown) {
-    trickName = 'BAR HOP!';
-    trickPoints = 280;
+  // Combo 4: K+I = "Sky Jump" (salto hacia arriba)
+  else if (!jDown && kDown && !lDown && !uDown && iDown) {
+    trickName = 'SKY JUMP!';
+    trickPoints = 300;
     trickColor = 0xff00ff;
-    trickPose = 'barhop';
-    bike.trickCooldown = 1.5;
-  }
-  // Combo 5: J+U = "Nac Nac" (pierna cruzada)
-  else if (jDown && !kDown && !lDown && uDown && !iDown) {
-    trickName = 'NAC NAC!';
-    trickPoints = 240;
-    trickColor = 0xffff00;
-    trickPose = 'nacnac';
+    trickPose = 'skyjump';
+    trickAction = 'skyjump';
     bike.trickCooldown = 1.5;
   }
   
   if (trickName) {
     score += trickPoints;
+    lastScoreTime = gameTime; // Actualizar tiempo de último punto
     bike.lastTrick = trickPose; // guardar pose para visualización
-    showFloatingText('+' + trickPoints + ' ' + trickName, bike.x, bike.y - 60);
+    
+    // Ejecutar acción especial del truco
+    if (trickAction === 'dashright') {
+      // Mover a la derecha
+      track.scroll += 80; // Avanza 80 píxeles
+      showFloatingText('+' + trickPoints + ' ' + trickName + ' >>>', bike.x, bike.y - 60);
+    } else if (trickAction === 'dashleft') {
+      // Mover a la izquierda (retrocede)
+      track.scroll = Math.max(0, track.scroll - 60); // Retrocede 60 píxeles (sin ir a negativo)
+      showFloatingText('<<< ' + trickName + ' +' + trickPoints, bike.x, bike.y - 60);
+    } else if (trickAction === 'groundslam') {
+      // Bajar rápidamente
+      bike.vy += 400; // Aumenta velocidad hacia abajo
+      showFloatingText('+' + trickPoints + ' ' + trickName + ' ↓↓↓', bike.x, bike.y - 60);
+    } else if (trickAction === 'skyjump') {
+      // Salto hacia arriba
+      bike.vy = -600; // Impulso fuerte hacia arriba
+      bike.air = true; // Asegurar que está en el aire
+      showFloatingText('+' + trickPoints + ' ' + trickName + ' ↑↑↑', bike.x, bike.y - 60);
+    } else {
+      showFloatingText('+' + trickPoints + ' ' + trickName, bike.x, bike.y - 60);
+    }
+    
     addTrickEffect(trickName, trickColor, trickPose);
     beep(this, 1200, 0.15);
     txt.setText('PUNTOS: ' + score);
@@ -559,6 +777,25 @@ function addTrickEffect(name, color, pose) {
   });
 }
 
+function handleJump(s) {
+  // Reducir cooldown
+  if (bike.jumpCooldown > 0) {
+    bike.jumpCooldown -= s;
+  }
+  
+  // Detectar presión de la tecla O (debe estar presionada, no usar JustDown porque puede perderse)
+  if (keyO && keyO.isDown && bike.jumpCooldown <= 0) {
+    // Solo saltar si está en el suelo o muy cerca
+    if (!bike.air || bike.y >= track.base - 5) {
+      bike.vy = -450; // Impulso vertical fuerte y visible
+      bike.air = true; // Asegurar que está en el aire
+      bike.jumpCooldown = 10; // Cooldown de 10 segundos para evitar abuso
+      beep(null, 900, 0.2); // Sonido de salto bien audible
+      showFloatingText('JUMP!', bike.x, bike.y - 40); // Feedback visual
+    }
+  }
+}
+
 function updateTrickEffects(s) {
   for (let i = trickEffects.length - 1; i >= 0; i--) {
     const e = trickEffects[i];
@@ -568,6 +805,92 @@ function updateTrickEffects(s) {
     if (e.life <= 0) {
       trickEffects.splice(i, 1);
     }
+  }
+}
+
+// Mecánica del viento
+function updateWind(s) {
+  gameTime += s;
+  nextWindChange -= s;
+  
+  // Cambio de viento periódico
+  if (nextWindChange <= 0) {
+    // Decidir si habrá viento o no
+    const willHaveWind = Math.random() < 0.4; // 40% de probabilidad
+    
+    if (willHaveWind) {
+      windActive = true;
+      windDirection = Math.random() < 0.5 ? 1 : -1; // Aleatorio izq/der
+      windForce = 0.3 + Math.random() * 0.7; // Fuerza: 0.3 a 1.0
+      nextWindChange = 3 + Math.random() * 4; // Duración: 3-7 segundos
+    } else {
+      windActive = false;
+      windForce = 0;
+      nextWindChange = 5 + Math.random() * 10; // Sin viento: 5-15 segundos
+    }
+  }
+}
+
+// Ciclo día/noche
+function updateDayNightCycle(s) {
+  // Cambiar fase según tiempo transcurrido
+  if (gameTime < dayDuration) {
+    // Día (0-45 segundos)
+    timeOfDay = 'day';
+    skyColor = 0x76c7ff; // Azul cielo brillante
+  } else if (gameTime < dayDuration * 2) {
+    // Tarde (45-90 segundos)
+    timeOfDay = 'afternoon';
+    // Transición gradual de azul cielo a naranja atardecer
+    const progress = (gameTime - dayDuration) / dayDuration;
+    skyColor = lerpColor(0x76c7ff, 0xff8844, progress);
+  } else {
+    // Noche (90+ segundos)
+    timeOfDay = 'night';
+    // Transición gradual de naranja a azul oscuro nocturno
+    const progress = Math.min(1, (gameTime - dayDuration * 2) / dayDuration);
+    skyColor = lerpColor(0xff8844, 0x1a1a3a, progress);
+  }
+  
+  // Actualizar color de fondo del juego (usa scene en lugar de sceneRef)
+  if (scene && scene.cameras && scene.cameras.main) {
+    scene.cameras.main.setBackgroundColor(skyColor);
+  }
+}
+
+// Función auxiliar para interpolar colores
+function lerpColor(color1, color2, t) {
+  const r1 = (color1 >> 16) & 0xFF;
+  const g1 = (color1 >> 8) & 0xFF;
+  const b1 = color1 & 0xFF;
+  
+  const r2 = (color2 >> 16) & 0xFF;
+  const g2 = (color2 >> 8) & 0xFF;
+  const b2 = color2 & 0xFF;
+  
+  const r = Math.floor(r1 + (r2 - r1) * t);
+  const g = Math.floor(g1 + (g2 - g1) * t);
+  const b = Math.floor(b1 + (b2 - b1) * t);
+  
+  return (r << 16) | (g << 8) | b;
+}
+
+// Verificar si la afición se aburre (sin puntos por 7 segundos)
+function checkCrowdBored(s) {
+  const timeSinceLastScore = gameTime - lastScoreTime;
+  
+  // Mostrar advertencia a los 5 segundos
+  if (timeSinceLastScore >= 5 && timeSinceLastScore < crowdBoredLimit) {
+    crowdBoredWarning = true;
+  } else {
+    crowdBoredWarning = false;
+  }
+  
+  // Perder si no gana puntos en 7 segundos
+  if (timeSinceLastScore >= crowdBoredLimit) {
+    gameOver = true;
+    gameOverReason = '¡La afición se aburrió!';
+    beep(this, 150, 0.5); // Sonido de abucheo
   }
 }
 
@@ -583,15 +906,36 @@ function land(slopeA) {
       // caída fea => game over
       gameOver = true;
     } else if (bike.flips > 0) {
-      // buen aterrizaje: bonus por flips acumulados
-      const pts = bike.flips * 200;
+      // buen aterrizaje: bonus por aterrizaje = 50 puntos
+      const pts = 50; // Cambio: aterrizaje = 50 puntos (antes era flips * 200)
       score += pts;
-      showFloatingText('+' + pts, bike.x, bike.y - 40);
+      lastScoreTime = gameTime; // Actualizar tiempo de último punto
+      showFloatingText('+' + pts + ' LANDING', bike.x, bike.y - 40);
       showJudgeScores(bike.flips);
       playJudgeSound(this); // Sonido corto "tuuun" para los jueces
       playApplause(this);
       beep(this, 980, 0.12);
     }
+    
+    // Verificar si aterrizó en zona de aterrizaje (TODAS las rampas tienen zona ahora)
+    const wx = bike.x + track.scroll;
+    for (let r of ramps) {
+      if (r.landingZone && !r.landingZone.collected) {
+        const lzX = r.landingZone.x;
+        const lzW = r.landingZone.w;
+        // Verificar si la posición del bike está dentro de la zona
+        if (wx >= lzX && wx <= lzX + lzW) {
+          const bonus = 200; // Cambio: zona de aterrizaje = 200 puntos (antes 500)
+          score += bonus;
+          lastScoreTime = gameTime; // Actualizar tiempo de último punto
+          showFloatingText('+' + bonus + ' ZONE!', bike.x, bike.y - 60);
+          r.landingZone.collected = true; // Marcar como cobrado
+          beep(this, 1200, 0.15); // Sonido especial para landing bonus
+          break; // Solo un bonus por aterrizaje
+        }
+      }
+    }
+    
     bike.air = false;
     bike.flipA = 0;
     bike.flips = 0;
@@ -642,12 +986,197 @@ function updateRamps() {
   if (rightWX > nextRampWX) {
     const w = 140 + Math.random() * 140;
     const h = 60 + Math.random() * 80;
-    ramps.push({ x: nextRampWX, w, h });
+    
+    // TODAS las rampas tienen zona de aterrizaje (100%)
+    const hasLandingZone = true; // Cambio: antes era Math.random() < 0.3
+    let landingZone = null;
+    
+    if (hasLandingZone) {
+      // Crear zona de aterrizaje después de la rampa
+      const landingX = nextRampWX + w + 150 + Math.random() * 100; // 150-250 px después
+      const landingW = 60 + Math.random() * 40; // Ancho: 60-100 px
+      landingZone = {
+        x: landingX,
+        w: landingW,
+        collected: false // Si ya cobró el bonus
+      };
+    }
+    
+    ramps.push({ 
+      x: nextRampWX, 
+      w, 
+      h,
+      landingZone: landingZone // null o objeto con zona de aterrizaje
+    });
     nextRampWX += 700 + Math.random() * 900;
   }
   // limpiar rampas muy atrás
   const leftWX = track.scroll - 200;
   ramps = ramps.filter(r => r.x + r.w > leftWX);
+}
+
+// Generar drones (obstáculos aéreos)
+function updatePigeons() {
+  const rightWX = track.scroll + 800;
+  if (rightWX > nextDroneWX) {
+    // Drones solo en la mitad superior de la pantalla (50-250 px)
+    const y = 50 + Math.random() * 200;
+    const speed = 30 + Math.random() * 40; // Velocidad de rotación de hélices
+    drones.push({ 
+      x: nextDroneWX, 
+      y: y,
+      propPhase: Math.random() * Math.PI * 2,
+      speed: speed
+    });
+    
+    // Frecuencia basada en el score - empiezan raros, luego más frecuentes
+    let spacing = 1800; // Muy espaciados al inicio
+    if (score > 500) spacing = 1400;
+    if (score > 1000) spacing = 1100;
+    if (score > 2000) spacing = 900;
+    if (score > 3500) spacing = 700;
+    if (score > 5000) spacing = 500; // Muy frecuentes cuando tienes mucho score
+    
+    nextDroneWX += spacing + Math.random() * 400;
+  }
+  // Actualizar animación de hélices
+  for (let d of drones) {
+    d.propPhase += 0.2;
+  }
+  // Limpiar drones muy atrás
+  const leftWX = track.scroll - 200;
+  drones = drones.filter(d => d.x > leftWX);
+}
+
+// Generar obstáculos en el suelo (carros/plataformas)
+// Generar obstáculos en el suelo (carros/plataformas)
+function updateObstacles() {
+  const rightWX = track.scroll + 800;
+  if (rightWX > nextObstacleWX) {
+    
+    // Probabilidad progresiva basada en el score
+    let spawnChance = 0.15; // 15% al inicio (muy raro)
+    if (score > 500) spawnChance = 0.25;  // 25%
+    if (score > 1000) spawnChance = 0.35; // 35%
+    if (score > 2000) spawnChance = 0.45; // 45%
+    if (score > 3500) spawnChance = 0.55; // 55%
+    if (score > 5000) spawnChance = 0.7;  // 70% (muy frecuente)
+    
+    if (Math.random() < spawnChance) {
+      // Buscar rampa cercana para colocar obstáculo estratégicamente
+      const nearbyRamp = ramps.find(r => Math.abs(r.x - nextObstacleWX) < 300);
+      
+      if (nearbyRamp) {
+        // Colocar carro justo después de la rampa (gap corto)
+        const gap = 30 + Math.random() * 40; // Gap corto: 30-70 px
+        const obstacleX = nearbyRamp.x + nearbyRamp.w + gap;
+        
+        // Altura variable del carro (más alto = más difícil)
+        let carHeight = 35 + Math.random() * 20; // 35-55 px
+        if (score > 2000) carHeight = 40 + Math.random() * 25; // Más altos con más score
+        
+        obstacles.push({ 
+          x: obstacleX, 
+          w: 100 + Math.random() * 60, // Ancho: 100-160 px (MÁS LARGOS)
+          h: carHeight,
+          type: 'car' // Solo carros (más interesantes visualmente)
+        });
+      } else {
+        // Si no hay rampa cerca, colocar obstáculo solo (menos común)
+        if (Math.random() < 0.3) { // 30% de chance sin rampa
+          obstacles.push({ 
+            x: nextObstacleWX, 
+            w: 100 + Math.random() * 50, // También más largos: 100-150 px
+            h: 40 + Math.random() * 20,
+            type: Math.random() > 0.3 ? 'car' : 'platform'
+          });
+        }
+      }
+    }
+    
+    // Espaciado dinámico - más frecuentes con mayor score
+    let spacing = 1000;
+    if (score > 1000) spacing = 850;
+    if (score > 2500) spacing = 700;
+    if (score > 5000) spacing = 550;
+    
+    nextObstacleWX += spacing + Math.random() * 400;
+  }
+  // Limpiar obstáculos muy atrás
+  const leftWX = track.scroll - 200;
+  obstacles = obstacles.filter(o => o.x + o.w > leftWX);
+}
+
+// Generar aros (bonus de puntos)
+function updateHoops() {
+  const rightWX = track.scroll + 800;
+  if (rightWX > nextHoopWX) {
+    // Probabilidad de aparecer basada en score
+    let spawnChance = 0.2; // 20% al inicio
+    if (score > 1000) spawnChance = 0.3;
+    if (score > 2500) spawnChance = 0.4;
+    if (score > 5000) spawnChance = 0.5;
+    
+    if (Math.random() < spawnChance) {
+      // Altura del aro (debe ser suficiente para pasar la moto)
+      const hoopY = 200 + Math.random() * 150; // Entre 200-350 px de altura
+      
+      // Aros especiales pequeños con más puntos (después de score 7000)
+      const isSpecialHoop = score >= 7000 && Math.random() < 0.25; // 25% de chance
+      const hoopRadius = isSpecialHoop ? 35 : 80; // Especial: 35px, Normal: 80px (MÁS GRANDE)
+      const hoopPoints = isSpecialHoop ? 1000 : 500; // Especial: 1000pts, Normal: 500pts
+      
+      const poleHeight = track.base - hoopY; // Altura del poste
+      
+      hoops.push({
+        x: nextHoopWX,
+        y: hoopY,
+        radius: hoopRadius,
+        poleHeight: poleHeight,
+        passed: false, // Si ya pasó por el aro
+        collected: false, // Si ya cobró el bonus
+        points: hoopPoints,
+        isSpecial: isSpecialHoop
+      });
+    }
+    
+    // Espaciado: aros especiales pueden aparecer más lejos
+    const baseSpacing = 1200 + Math.random() * 800; // 1200-2000
+    const extraSpacing = (score >= 7000 && Math.random() < 0.3) ? 1000 + Math.random() * 1500 : 0; // A veces muy lejos
+    nextHoopWX += baseSpacing + extraSpacing;
+  }
+  
+  // Limpiar aros muy atrás
+  const leftWX = track.scroll - 200;
+  hoops = hoops.filter(h => h.x > leftWX);
+}
+
+function updateSpikes() {
+  const rightWX = track.scroll + 800;
+  if (rightWX > nextSpikeWX) {
+    // Probabilidad de aparición basada en score
+    let spawnChance = 0.3; // 30% al inicio
+    if (score > 1000) spawnChance = 0.4;
+    if (score > 3000) spawnChance = 0.5;
+    if (score > 5000) spawnChance = 0.6;
+    
+    if (Math.random() < spawnChance) {
+      const spikeWidth = 20 + Math.random() * 15; // 20-35 px ancho
+      spikes.push({
+        x: nextSpikeWX,
+        w: spikeWidth,
+        collected: false
+      });
+    }
+    
+    // Espaciado entre púas
+    const baseSpacing = 400 + Math.random() * 600; // 400-1000
+    nextSpikeWX += baseSpacing;
+  }
+  
+  // Limpiar púas muy atrás
+  const leftWX = track.scroll - 200;
+  spikes = spikes.filter(sp => sp.x > leftWX);
 }
 
 function wrapAngle(a) {
@@ -656,6 +1185,135 @@ function wrapAngle(a) {
     return a;
   }
   function normalizeAngle(a) { a = wrapAngle(a); return a; }
+
+// Detección de colisiones con obstáculos
+function checkCollisions() {
+  const bikeWX = bike.x + track.scroll;
+  const bikeRadius = 15; // Radio de colisión de la moto
+  
+  // Colisión con drones (en el aire)
+  for (let i = drones.length - 1; i >= 0; i--) {
+    const d = drones[i];
+    const dx = bikeWX - d.x;
+    const dy = bike.y - d.y;
+    const dist = Math.hypot(dx, dy);
+    
+    if (dist < bikeRadius + 25) { // Radio del drone ~25
+      // ¡Colisión con drone!
+      drones.splice(i, 1); // Remover drone
+      handleCrash.call(this, 'Chocaste un drone!');
+      beep(this, 200, 0.3); // Sonido de choque
+      return;
+    }
+  }
+  
+  // Colisión con obstáculos del suelo (solo si está en el suelo o muy cerca)
+  if (!bike.air || bike.y > 400) {
+    for (let o of obstacles) {
+      const oLeft = o.x;
+      const oRight = o.x + o.w;
+      const oTop = track.base - o.h;
+      
+      // Verificar si la moto está en el rango horizontal del obstáculo
+      if (bikeWX + bikeRadius > oLeft && bikeWX - bikeRadius < oRight) {
+        // Verificar si está a la altura del obstáculo
+        if (bike.y + bikeRadius > oTop) {
+          handleCrash.call(this, 'Chocaste un obstaculo!');
+          beep(this, 150, 0.4);
+          return;
+        }
+      }
+    }
+  }
+  
+  // Interacción con aros
+  for (let h of hoops) {
+    const screenX = h.x - track.scroll;
+    if (screenX < -100 || screenX > 900) continue; // Fuera de rango
+    
+    const dx = bikeWX - h.x;
+    const dy = bike.y - h.y;
+    const distToCenter = Math.hypot(dx, dy);
+    
+    // Verificar si está en el rango horizontal del aro
+    if (Math.abs(dx) < h.radius + bikeRadius) {
+      
+      // 1. Choque con el POSTE (parte inferior) - NO MUERE, solo rebota/esquiva
+      const poleTop = h.y;
+      const poleBottom = track.base;
+      const poleX = h.x;
+      if (Math.abs(bikeWX - poleX) < 8 && bike.y > poleTop && bike.y < poleBottom) {
+        // Está chocando con el poste - no hace nada (lo esquiva)
+        continue;
+      }
+      
+      // 2. Pasó POR DENTRO del aro - BONUS!
+      if (distToCenter < h.radius && !h.collected) {
+        h.collected = true;
+        const points = h.points || 500; // Usa los puntos del aro
+        score += points;
+        lastScoreTime = gameTime; // Actualizar tiempo de último punto
+        const bonusText = h.isSpecial ? '+' + points + ' SPECIAL!' : '+' + points + ' BONUS!';
+        showFloatingText(bonusText, bike.x, bike.y - 50);
+        beep(this, h.isSpecial ? 1200 : 880, 0.15); // Sonido más agudo para especiales
+        continue;
+      }
+      
+      // 3. Choque con el ARO (círculo) - YA NO MUERE, solo no gana puntos
+      // Removido: ahora solo importa si pasa por dentro
+    }
+  }
+  
+  // Colisión con púas en el suelo
+  if (!bike.air || bike.y > track.base - 20) { // Solo si está cerca del suelo
+    for (let i = spikes.length - 1; i >= 0; i--) {
+      const sp = spikes[i];
+      const spLeft = sp.x - sp.w / 2;
+      const spRight = sp.x + sp.w / 2;
+      
+      // Verificar si la moto está sobre la púa
+      if (bikeWX + bikeRadius > spLeft && bikeWX - bikeRadius < spRight) {
+        if (bike.y >= track.base - 25) { // Altura de las púas
+          handleCrash.call(this, 'Tocaste una pua!');
+          beep(this, 100, 0.5);
+          return;
+        }
+      }
+    }
+  }
+}
+
+// Manejar crash (muerte)
+function handleCrash(message) {
+  if (gameMode === 'competition') {
+    gameOver = true;
+    gameOverReason = message;
+  } else if (gameMode === '1v1') {
+    // Reducir vida del jugador actual
+    if (currentPlayer === 1) {
+      player1Lives--;
+      if (player1Lives <= 0) {
+        gameState = '1v1end';
+        winner = 2;
+      } else {
+        // Cambiar al jugador 2
+        gameState = '1v1ready';
+        previousPlayerScore = score;
+      }
+    } else {
+      player2Lives--;
+      if (player2Lives <= 0) {
+        gameState = '1v1end';
+        winner = 1;
+      } else {
+        // Volver al jugador 1
+        gameState = '1v1ready';
+        previousPlayerScore = score;
+      }
+    }
+    resetBikePosition();
+  }
+}
 
 // Textos flotantes de puntos
 function showFloatingText(text, x, y) {
@@ -764,6 +1422,103 @@ function drawJudgeScores() {
       drawStars(x, startY - 30, alpha);
     }
   }
+}
+
+// Indicador visual del viento
+function drawWindIndicator() {
+  if (!windActive || !scene) return;
+  
+  // Posición en la esquina superior derecha
+  const x = 700;
+  const y = 30;
+  
+  // Fondo del indicador
+  g.fillStyle(0x000000, 0.5);
+  g.fillRoundedRect(x - 60, y - 15, 120, 30, 5);
+  
+  // Texto "VIENTO"
+  const windText = scene.add.text(x - 40, y, 'WIND', {
+    fontFamily: 'Arial',
+    fontSize: '12px',
+    color: '#FFF',
+    fontWeight: 'bold'
+  });
+  windText.setOrigin(0, 0.5);
+  scene.time.delayedCall(16, () => windText.destroy());
+  
+  // Flechas indicando dirección y fuerza
+  const arrowCount = Math.ceil(windForce * 3); // 1-3 flechas
+  const arrowX = x + 10;
+  const direction = windDirection > 0 ? 1 : -1; // Derecha o izquierda
+  
+  for (let i = 0; i < arrowCount; i++) {
+    const offset = i * 12 * direction;
+    drawWindArrow(arrowX + offset, y, direction, windForce);
+  }
+}
+
+function drawWindArrow(x, y, direction, intensity) {
+  // Color según intensidad (amarillo débil → rojo fuerte)
+  let color = 0xFFFF00;
+  if (intensity > 0.6) color = 0xFF9900;
+  if (intensity > 0.8) color = 0xFF0000;
+  
+  g.fillStyle(color, 0.8);
+  
+  // Triángulo apuntando en la dirección del viento
+  const size = 6;
+  g.beginPath();
+  if (direction > 0) {
+    // Flecha derecha →
+    g.moveTo(x - size, y - size);
+    g.lineTo(x + size, y);
+    g.lineTo(x - size, y + size);
+  } else {
+    // Flecha izquierda ←
+    g.moveTo(x + size, y - size);
+    g.lineTo(x - size, y);
+    g.lineTo(x + size, y + size);
+  }
+  g.closePath();
+  g.fillPath();
+}
+
+// Advertencia de afición aburrida
+function drawCrowdBoredWarning() {
+  if (!crowdBoredWarning || !scene) return;
+  
+  const timeSinceLastScore = gameTime - lastScoreTime;
+  const timeRemaining = crowdBoredLimit - timeSinceLastScore;
+  
+  // Efecto pulsante más intenso cuanto menos tiempo quede
+  const pulse = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+  const urgency = 1 - (timeRemaining / 2); // 0 a 1 (más urgente al final)
+  
+  // Fondo semi-transparente en la parte superior
+  g.fillStyle(0xff0000, 0.2 + urgency * 0.3);
+  g.fillRect(0, 0, 800, 150);
+  
+  // Texto de advertencia con efecto pulsante
+  const warningText = scene.add.text(400, 75, '¡HAZ TRUCOS O LA AFICIÓN SE ABURRIRÁ!', {
+    fontFamily: 'Arial Black',
+    fontSize: Math.floor((24 + urgency * 12) * pulse) + 'px',
+    color: '#FF0000',
+    stroke: '#FFFF00',
+    strokeThickness: 4 + urgency * 3
+  });
+  warningText.setOrigin(0.5);
+  scene.time.delayedCall(16, () => warningText.destroy());
+  
+  // Temporizador
+  const timerText = scene.add.text(400, 110, Math.ceil(timeRemaining) + 's', {
+    fontFamily: 'Arial Black',
+    fontSize: Math.floor(32 * pulse) + 'px',
+    color: '#FFFF00',
+    stroke: '#FF0000',
+    strokeThickness: 5
+  });
+  timerText.setOrigin(0.5);
+  scene.time.delayedCall(16, () => timerText.destroy());
 }
 
 function getScoreColor(score) {
@@ -944,11 +1699,16 @@ function draw() {
     g.clear();
     drawBackground();
     drawAirParticles(); // Líneas de velocidad
+    drawDrones(); // Drones voladores
+    drawHoops(); // Aros de bonus
     drawTrack();
+    drawObstacles(); // Obstáculos en el suelo
+    drawSpikes(); // Púas en el suelo
     drawBike();
     drawTrickEffects(); // efectos visuales de acrobacias
     drawFloatingTexts();
     drawJudgeScores();
+    drawWindIndicator(); // Indicador de viento
     draw1v1HUD(); // HUD específico para 1v1
     if (gameOver) drawGameOver();
   }
@@ -957,90 +1717,207 @@ function drawMenu() {
   if (!g || !scene) return;
   g.clear();
   
-  // Fondo degradado
-  g.fillGradientStyle(0x0066cc, 0x0066cc, 0x003366, 0x003366, 1);
+  // Fondo degradado más dramático (oscuro arriba, brillante abajo)
+  g.fillGradientStyle(0x1a0033, 0x1a0033, 0xff6600, 0xff6600, 1);
   g.fillRect(0, 0, 800, 600);
   
-  // Título principal
-  const title = scene.add.text(400, 120, 'BROKE BONEZ', {
+  // Estrellas decorativas en el fondo
+  for (let i = 0; i < 30; i++) {
+    const x = (i * 73) % 800;
+    const y = (i * 47) % 300;
+    g.fillStyle(0xffffff, 0.3 + Math.random() * 0.3);
+    g.fillCircle(x, y, 1 + Math.random() * 2);
+  }
+  
+  // Barra decorativa superior
+  g.fillStyle(0x000000, 0.5);
+  g.fillRect(0, 0, 800, 60);
+  
+  // Llamas decorativas en los laterales
+  const flameTime = Date.now() / 100;
+  for (let side of [-1, 1]) {
+    const baseX = side === -1 ? 50 : 750;
+    for (let i = 0; i < 5; i++) {
+      const flameY = 200 + i * 80 + Math.sin(flameTime + i) * 10;
+      const flameSize = 20 + Math.sin(flameTime * 2 + i) * 8;
+      g.fillStyle(0xff6600, 0.6);
+      g.fillCircle(baseX, flameY, flameSize);
+      g.fillStyle(0xffaa00, 0.8);
+      g.fillCircle(baseX, flameY - 5, flameSize * 0.7);
+      g.fillStyle(0xffff00, 0.5);
+      g.fillCircle(baseX, flameY - 10, flameSize * 0.4);
+    }
+  }
+  
+  // Sombra del título
+  const titleShadow = scene.add.text(405, 105, 'BROKE BONEZ', {
     fontFamily: 'Arial Black',
-    fontSize: '72px',
+    fontSize: '84px',
+    color: '#000000',
+    alpha: 0.5
+  });
+  titleShadow.setOrigin(0.5);
+  scene.time.delayedCall(16, () => titleShadow.destroy());
+  
+  // Título principal con efecto metálico
+  const title = scene.add.text(400, 100, 'BROKE BONEZ', {
+    fontFamily: 'Arial Black',
+    fontSize: '84px',
     color: '#FFD700',
-    stroke: '#000',
-    strokeThickness: 8
+    stroke: '#8B4513',
+    strokeThickness: 10
   });
   title.setOrigin(0.5);
   scene.time.delayedCall(16, () => title.destroy());
   
-  // Subtítulo
-  const subtitle = scene.add.text(400, 200, 'EXTREME STUNTS', {
-    fontFamily: 'Arial',
-    fontSize: '24px',
-    color: '#FFF',
-    stroke: '#000',
-    strokeThickness: 3
+  // Brillo en el título
+  const titleShine = scene.add.text(400, 100, 'BROKE BONEZ', {
+    fontFamily: 'Arial Black',
+    fontSize: '84px',
+    color: '#FFFFFF',
+    alpha: 0.3
+  });
+  titleShine.setOrigin(0.5);
+  scene.time.delayedCall(16, () => titleShine.destroy());
+  
+  // Subtítulo con efecto neón
+  const subtitle = scene.add.text(400, 185, '⚡ EXTREME MOTORCYCLE STUNTS ⚡', {
+    fontFamily: 'Arial Black',
+    fontSize: '22px',
+    color: '#00FFFF',
+    stroke: '#0066CC',
+    strokeThickness: 4
   });
   subtitle.setOrigin(0.5);
   scene.time.delayedCall(16, () => subtitle.destroy());
   
-  // Opción 1: Competición
-  g.fillStyle(0xff6600, 1);
-  g.fillRoundedRect(200, 280, 400, 80, 20);
-  g.lineStyle(4, 0xffaa00, 1);
-  g.strokeRoundedRect(200, 280, 400, 80, 20);
+  // Calavera decorativa (símbolo del juego)
+  const skull = scene.add.text(400, 230, '💀', {
+    fontSize: '48px'
+  });
+  skull.setOrigin(0.5);
+  scene.time.delayedCall(16, () => skull.destroy());
   
-  const opt1 = scene.add.text(400, 310, '[1] COMPETICIÓN (1 JUGADOR)', {
+  // === OPCIÓN 1: COMPETICIÓN ===
+  // Fondo con sombra
+  g.fillStyle(0x000000, 0.3);
+  g.fillRoundedRect(155, 295, 490, 90, 15);
+  
+  // Botón principal
+  g.fillStyle(0xff3333, 1);
+  g.fillRoundedRect(150, 290, 490, 90, 15);
+  
+  // Borde brillante
+  g.lineStyle(5, 0xffaa00, 1);
+  g.strokeRoundedRect(150, 290, 490, 90, 15);
+  
+  // Ícono de trofeo
+  const trophy1 = scene.add.text(180, 325, '🏆', {
+    fontSize: '42px'
+  });
+  trophy1.setOrigin(0.5);
+  scene.time.delayedCall(16, () => trophy1.destroy());
+  
+  const opt1 = scene.add.text(400, 315, '[1] COMPETICIÓN', {
     fontFamily: 'Arial Black',
-    fontSize: '24px',
-    color: '#FFF',
+    fontSize: '32px',
+    color: '#FFFF00',
     stroke: '#000',
-    strokeThickness: 4
+    strokeThickness: 6
   });
   opt1.setOrigin(0.5);
   scene.time.delayedCall(16, () => opt1.destroy());
   
-  const opt1desc = scene.add.text(400, 345, '1 vida - Top 10 - Máxima puntuación', {
+  const opt1desc = scene.add.text(400, 355, '1 JUGADOR • TOP 10 • RÉCORDS', {
     fontFamily: 'Arial',
-    fontSize: '14px',
-    color: '#FFD700'
+    fontSize: '16px',
+    color: '#FFD700',
+    stroke: '#000',
+    strokeThickness: 3
   });
   opt1desc.setOrigin(0.5);
   scene.time.delayedCall(16, () => opt1desc.destroy());
   
-  // Opción 2: 1vs1
-  g.fillStyle(0x0099ff, 1);
-  g.fillRoundedRect(200, 400, 400, 80, 20);
-  g.lineStyle(4, 0x00ccff, 1);
-  g.strokeRoundedRect(200, 400, 400, 80, 20);
+  // === OPCIÓN 2: 1 VS 1 ===
+  // Fondo con sombra
+  g.fillStyle(0x000000, 0.3);
+  g.fillRoundedRect(155, 415, 490, 90, 15);
   
-  const opt2 = scene.add.text(400, 430, '[2] 1 VS 1', {
+  // Botón principal
+  g.fillStyle(0x0066ff, 1);
+  g.fillRoundedRect(150, 410, 490, 90, 15);
+  
+  // Borde brillante
+  g.lineStyle(5, 0x00ccff, 1);
+  g.strokeRoundedRect(150, 410, 490, 90, 15);
+  
+  // Íconos de jugadores
+  const player1Icon = scene.add.text(180, 445, '🏍️', {
+    fontSize: '38px'
+  });
+  player1Icon.setOrigin(0.5);
+  scene.time.delayedCall(16, () => player1Icon.destroy());
+  
+  const vsText = scene.add.text(615, 435, 'VS', {
     fontFamily: 'Arial Black',
     fontSize: '24px',
-    color: '#FFF',
+    color: '#FFD700',
     stroke: '#000',
     strokeThickness: 4
+  });
+  vsText.setOrigin(0.5);
+  scene.time.delayedCall(16, () => vsText.destroy());
+  
+  const player2Icon = scene.add.text(615, 460, '🏍️', {
+    fontSize: '38px'
+  });
+  player2Icon.setOrigin(0.5);
+  scene.time.delayedCall(16, () => player2Icon.destroy());
+  
+  const opt2 = scene.add.text(370, 435, '[2] 1 VS 1', {
+    fontFamily: 'Arial Black',
+    fontSize: '32px',
+    color: '#00FFFF',
+    stroke: '#000',
+    strokeThickness: 6
   });
   opt2.setOrigin(0.5);
   scene.time.delayedCall(16, () => opt2.destroy());
   
-  const opt2desc = scene.add.text(400, 465, '3 vidas cada uno - El mejor gana', {
+  const opt2desc = scene.add.text(370, 475, '2 JUGADORES • 3 VIDAS', {
     fontFamily: 'Arial',
-    fontSize: '14px',
-    color: '#FFD700'
+    fontSize: '16px',
+    color: '#00FFFF',
+    stroke: '#000',
+    strokeThickness: 3
   });
   opt2desc.setOrigin(0.5);
   scene.time.delayedCall(16, () => opt2desc.destroy());
   
-  // Instrucciones
-  const inst = scene.add.text(400, 550, 'Presiona 1 o 2 para seleccionar modo', {
-    fontFamily: 'monospace',
-    fontSize: '16px',
-    color: '#FFF',
+  // === INSTRUCCIONES ABAJO ===
+  const instBox = scene.add.rectangle(400, 555, 600, 50, 0x000000, 0.7);
+  scene.time.delayedCall(16, () => instBox.destroy());
+  
+  const inst = scene.add.text(400, 555, '🎮 PRESIONA 1 o 2 PARA COMENZAR 🎮', {
+    fontFamily: 'Arial Black',
+    fontSize: '18px',
+    color: '#FFFFFF',
     stroke: '#000',
-    strokeThickness: 2
+    strokeThickness: 3
   });
   inst.setOrigin(0.5);
   scene.time.delayedCall(16, () => inst.destroy());
+  
+  // Animación parpadeante para "PRESS START"
+  const blinkAlpha = Math.sin(Date.now() / 300) * 0.5 + 0.5;
+  const pressStart = scene.add.text(400, 525, '▶ SELECT YOUR MODE ◀', {
+    fontFamily: 'Arial',
+    fontSize: '14px',
+    color: '#FFD700',
+    alpha: blinkAlpha
+  });
+  pressStart.setOrigin(0.5);
+  scene.time.delayedCall(16, () => pressStart.destroy());
 }
 
 function drawEnterName() {
@@ -1113,7 +1990,7 @@ function drawEnterName() {
   }
   
   // Instrucciones
-  const controls = scene.add.text(400, 480, '← → Mover | X Subir letra | Z Bajar letra', {
+  const controls = scene.add.text(400, 480, '← → Mover | J Subir letra | K Bajar letra', {
     fontFamily: 'Arial',
     fontSize: '18px',
     color: '#AAA'
@@ -1137,7 +2014,7 @@ function drawLeaderboard() {
   g.fillGradientStyle(0x000066, 0x000066, 0x000033, 0x000033, 1);
   g.fillRect(0, 0, 800, 600);
   
-  const title = scene.add.text(400, 50, 'TOP 10 - MEJORES PILOTOS', {
+  const title = scene.add.text(400, 40, 'TOP 10 - MEJORES PILOTOS', {
     fontFamily: 'Arial Black',
     fontSize: '42px',
     color: '#FFD700',
@@ -1160,44 +2037,139 @@ function drawLeaderboard() {
   } else {
     // Mostrar entradas existentes
     for (let i = 0; i < leaderboard.length; i++) {
-      const y = 130 + i * 42;
       const entry = leaderboard[i];
-      
       const isHighlighted = entry.name === playerName && entry.score === score;
-      const bgColor = isHighlighted ? 0xFFD700 : (i % 2 === 0 ? 0x1a1a3a : 0x0d0d1f);
-      const textColor = isHighlighted ? '#000' : '#FFF';
-      const scoreColor = isHighlighted ? '#000' : '#FFD700';
       
-      g.fillStyle(bgColor, 1);
-      g.fillRoundedRect(150, y - 18, 500, 36, 8);
-      
-      const pos = scene.add.text(180, y, (i + 1) + '.', {
-        fontFamily: 'Arial Black',
-        fontSize: '22px',
-        color: textColor
-      });
-      scene.time.delayedCall(16, () => pos.destroy());
-      
-      const name = scene.add.text(240, y, entry.name, {
-        fontFamily: 'monospace',
-        fontSize: '24px',
-        color: textColor,
-        stroke: '#000',
-        strokeThickness: 2
-      });
-      scene.time.delayedCall(16, () => name.destroy());
-      
-      const pts = scene.add.text(600, y, entry.score.toString(), {
-        fontFamily: 'Arial Black',
-        fontSize: '22px',
-        color: scoreColor
-      });
-      pts.setOrigin(1, 0);
-      scene.time.delayedCall(16, () => pts.destroy());
+      // POSICIONES 1, 2, 3 - DESTACADAS
+      if (i < 3) {
+        const podiumY = 110 + i * 55; // Más espacio para el podio
+        
+        // Colores especiales por posición
+        let medalColor, bgColor, nameColor, scoreColor, fontSize, strokeThickness;
+        
+        if (i === 0) { // 1er lugar - ORO
+          medalColor = 0xFFD700;
+          bgColor = isHighlighted ? 0xFFD700 : 0x4a3800;
+          nameColor = isHighlighted ? '#000' : '#FFD700';
+          scoreColor = isHighlighted ? '#000' : '#FFD700';
+          fontSize = '32px';
+          strokeThickness = 5;
+        } else if (i === 1) { // 2do lugar - PLATA
+          medalColor = 0xC0C0C0;
+          bgColor = isHighlighted ? 0xFFD700 : 0x3a3a3a;
+          nameColor = isHighlighted ? '#000' : '#E0E0E0';
+          scoreColor = isHighlighted ? '#000' : '#C0C0C0';
+          fontSize = '28px';
+          strokeThickness = 4;
+        } else { // 3er lugar - BRONCE
+          medalColor = 0xCD7F32;
+          bgColor = isHighlighted ? 0xFFD700 : 0x3a2a1a;
+          nameColor = isHighlighted ? '#000' : '#CD7F32';
+          scoreColor = isHighlighted ? '#000' : '#CD7F32';
+          fontSize = '26px';
+          strokeThickness = 4;
+        }
+        
+        // Fondo especial con brillo
+        g.fillStyle(bgColor, 1);
+        g.fillRoundedRect(80, podiumY - 22, 640, 48, 12);
+        
+        // Borde metálico
+        g.lineStyle(3, medalColor, 1);
+        g.strokeRoundedRect(80, podiumY - 22, 640, 48, 12);
+        
+        // Medalla/Corona
+        const medalX = 110;
+        g.fillStyle(medalColor, 1);
+        if (i === 0) {
+          // Corona para el 1er lugar
+          g.fillRect(medalX - 10, podiumY - 8, 20, 12);
+          g.fillTriangle(medalX - 10, podiumY - 8, medalX - 5, podiumY - 15, medalX, podiumY - 8);
+          g.fillTriangle(medalX, podiumY - 8, medalX, podiumY - 18, medalX + 5, podiumY - 8);
+          g.fillTriangle(medalX + 5, podiumY - 8, medalX + 10, podiumY - 15, medalX + 10, podiumY - 8);
+        } else {
+          // Medalla circular para 2do y 3er lugar
+          g.fillCircle(medalX, podiumY, 12);
+          g.lineStyle(2, 0x000000, 1);
+          g.strokeCircle(medalX, podiumY, 12);
+        }
+        
+        // Número de posición dentro de la medalla
+        const posNum = scene.add.text(medalX, podiumY, (i + 1), {
+          fontFamily: 'Arial Black',
+          fontSize: '18px',
+          color: i === 0 ? '#000' : '#FFF',
+          stroke: i === 0 ? '#FFD700' : '#000',
+          strokeThickness: 2
+        });
+        posNum.setOrigin(0.5);
+        scene.time.delayedCall(16, () => posNum.destroy());
+        
+        // Nombre del jugador
+        const name = scene.add.text(150, podiumY, entry.name, {
+          fontFamily: 'Arial Black',
+          fontSize: fontSize,
+          color: nameColor,
+          stroke: '#000',
+          strokeThickness: strokeThickness
+        });
+        name.setOrigin(0, 0.5);
+        scene.time.delayedCall(16, () => name.destroy());
+        
+        // Puntos
+        const pts = scene.add.text(690, podiumY, entry.score.toString(), {
+          fontFamily: 'Arial Black',
+          fontSize: fontSize,
+          color: scoreColor,
+          stroke: '#000',
+          strokeThickness: strokeThickness
+        });
+        pts.setOrigin(1, 0.5);
+        scene.time.delayedCall(16, () => pts.destroy());
+        
+      } else {
+        // POSICIONES 4-10 - ESTILO NORMAL
+        const y = 280 + (i - 3) * 38;
+        
+        const bgColor1 = isHighlighted ? 0xFFD700 : 0x1a1a3a;
+        const bgColor2 = isHighlighted ? 0xFFD700 : 0x0d0d1f;
+        const bgColor = (i % 2 === 0) ? bgColor1 : bgColor2;
+        const textColor = isHighlighted ? '#000' : '#CCC';
+        const scoreColor = isHighlighted ? '#000' : '#FFD700';
+        
+        g.fillStyle(bgColor, 1);
+        g.fillRoundedRect(120, y - 16, 560, 32, 6);
+        
+        const pos = scene.add.text(150, y, (i + 1) + '.', {
+          fontFamily: 'Arial',
+          fontSize: '20px',
+          color: textColor
+        });
+        pos.setOrigin(0, 0.5);
+        scene.time.delayedCall(16, () => pos.destroy());
+        
+        const name = scene.add.text(200, y, entry.name, {
+          fontFamily: 'monospace',
+          fontSize: '22px',
+          color: textColor,
+          stroke: '#000',
+          strokeThickness: 2
+        });
+        name.setOrigin(0, 0.5);
+        scene.time.delayedCall(16, () => name.destroy());
+        
+        const pts = scene.add.text(650, y, entry.score.toString(), {
+          fontFamily: 'Arial',
+          fontSize: '20px',
+          color: scoreColor
+        });
+        pts.setOrigin(1, 0.5);
+        scene.time.delayedCall(16, () => pts.destroy());
+      }
     }
   }
   
-  const inst = scene.add.text(400, 560, 'Presiona ENTER para volver al menú', {
+  const inst = scene.add.text(400, 570, 'Presiona ENTER para volver al menú', {
     fontFamily: 'Arial',
     fontSize: '18px',
     color: '#FFF'
@@ -1391,10 +2363,11 @@ function drawTrophy(x, y) {
 function draw1v1HUD() {
   if (!scene || gameMode !== '1v1' || gameState !== '1v1') return;
   
-  const p1Panel = scene.add.rectangle(120, 70, 200, 50, 0x000000, 0.7);
+  // Panel Jugador 1 (abajo izquierda)
+  const p1Panel = scene.add.rectangle(120, 560, 200, 50, 0x000000, 0.7);
   scene.time.delayedCall(16, () => p1Panel.destroy());
   
-  const p1Text = scene.add.text(120, 60, 'JUGADOR 1', {
+  const p1Text = scene.add.text(120, 550, 'JUGADOR 1', {
     fontFamily: 'Arial Black',
     fontSize: '16px',
     color: currentPlayer === 1 ? '#00FF00' : '#FFF'
@@ -1402,16 +2375,17 @@ function draw1v1HUD() {
   p1Text.setOrigin(0.5);
   scene.time.delayedCall(16, () => p1Text.destroy());
   
-  const p1Lives = scene.add.text(120, 80, '❤'.repeat(player1Lives) + '🖤'.repeat(3 - player1Lives), {
+  const p1Lives = scene.add.text(120, 570, '❤'.repeat(player1Lives) + '🖤'.repeat(3 - player1Lives), {
     fontSize: '18px'
   });
   p1Lives.setOrigin(0.5);
   scene.time.delayedCall(16, () => p1Lives.destroy());
   
-  const p2Panel = scene.add.rectangle(680, 70, 200, 50, 0x000000, 0.7);
+  // Panel Jugador 2 (abajo derecha)
+  const p2Panel = scene.add.rectangle(680, 560, 200, 50, 0x000000, 0.7);
   scene.time.delayedCall(16, () => p2Panel.destroy());
   
-  const p2Text = scene.add.text(680, 60, 'JUGADOR 2', {
+  const p2Text = scene.add.text(680, 550, 'JUGADOR 2', {
     fontFamily: 'Arial Black',
     fontSize: '16px',
     color: currentPlayer === 2 ? '#00FF00' : '#FFF'
@@ -1419,12 +2393,13 @@ function draw1v1HUD() {
   p2Text.setOrigin(0.5);
   scene.time.delayedCall(16, () => p2Text.destroy());
   
-  const p2Lives = scene.add.text(680, 80, '❤'.repeat(player2Lives) + '🖤'.repeat(3 - player2Lives), {
+  const p2Lives = scene.add.text(680, 570, '❤'.repeat(player2Lives) + '🖤'.repeat(3 - player2Lives), {
     fontSize: '18px'
   });
   p2Lives.setOrigin(0.5);
   scene.time.delayedCall(16, () => p2Lives.destroy());
   
+  // Indicador de turno (centro de la pantalla, temporal)
   if (turnJustStarted) {
     const turnText = scene.add.text(400, 300, 'TURNO JUGADOR ' + currentPlayer, {
       fontFamily: 'Arial Black',
@@ -1444,39 +2419,111 @@ function draw1v1HUD() {
 // Música de fondo dinámica - Cambia según la velocidad
 let musicLoopTimer = null;
 let currentMusicSpeed = 'normal';
+let selectedMelody = 0; // Melodía elegida para esta partida
+
+// 4 melodías diferentes para variedad
+const melodies = [
+  // Melodía 1: Original (C-E-G-A)
+  {
+    normal: [
+      { freq: 523, dur: 0.25 }, // C5
+      { freq: 659, dur: 0.25 }, // E5
+      { freq: 784, dur: 0.25 }, // G5
+      { freq: 880, dur: 0.25 }, // A5
+      { freq: 784, dur: 0.25 }, // G5
+      { freq: 659, dur: 0.25 }, // E5
+      { freq: 587, dur: 0.25 }, // D5
+      { freq: 523, dur: 0.25 }, // C5
+    ],
+    fast: [
+      { freq: 784, dur: 0.15 }, // G5
+      { freq: 880, dur: 0.15 }, // A5
+      { freq: 988, dur: 0.15 }, // B5
+      { freq: 1047, dur: 0.15 }, // C6
+      { freq: 988, dur: 0.15 }, // B5
+      { freq: 1047, dur: 0.15 }, // C6
+      { freq: 1175, dur: 0.15 }, // D6
+      { freq: 1047, dur: 0.15 }, // C6
+    ]
+  },
+  // Melodía 2: Rock (A-D-E-A)
+  {
+    normal: [
+      { freq: 440, dur: 0.25 }, // A4
+      { freq: 587, dur: 0.25 }, // D5
+      { freq: 659, dur: 0.25 }, // E5
+      { freq: 440, dur: 0.25 }, // A4
+      { freq: 587, dur: 0.25 }, // D5
+      { freq: 659, dur: 0.25 }, // E5
+      { freq: 587, dur: 0.25 }, // D5
+      { freq: 523, dur: 0.25 }, // C5
+    ],
+    fast: [
+      { freq: 880, dur: 0.15 }, // A5
+      { freq: 1175, dur: 0.15 }, // D6
+      { freq: 1319, dur: 0.15 }, // E6
+      { freq: 880, dur: 0.15 }, // A5
+      { freq: 1175, dur: 0.15 }, // D6
+      { freq: 1319, dur: 0.15 }, // E6
+      { freq: 1175, dur: 0.15 }, // D6
+      { freq: 1047, dur: 0.15 }, // C6
+    ]
+  },
+  // Melodía 3: Épica (G-B-D-G)
+  {
+    normal: [
+      { freq: 392, dur: 0.25 }, // G4
+      { freq: 494, dur: 0.25 }, // B4
+      { freq: 587, dur: 0.25 }, // D5
+      { freq: 784, dur: 0.25 }, // G5
+      { freq: 659, dur: 0.25 }, // E5
+      { freq: 587, dur: 0.25 }, // D5
+      { freq: 494, dur: 0.25 }, // B4
+      { freq: 392, dur: 0.25 }, // G4
+    ],
+    fast: [
+      { freq: 784, dur: 0.15 }, // G5
+      { freq: 988, dur: 0.15 }, // B5
+      { freq: 1175, dur: 0.15 }, // D6
+      { freq: 1568, dur: 0.15 }, // G6
+      { freq: 1319, dur: 0.15 }, // E6
+      { freq: 1175, dur: 0.15 }, // D6
+      { freq: 988, dur: 0.15 }, // B5
+      { freq: 784, dur: 0.15 }, // G5
+    ]
+  },
+  // Melodía 4: Electrónica (F-A-C-E)
+  {
+    normal: [
+      { freq: 349, dur: 0.25 }, // F4
+      { freq: 440, dur: 0.25 }, // A4
+      { freq: 523, dur: 0.25 }, // C5
+      { freq: 659, dur: 0.25 }, // E5
+      { freq: 523, dur: 0.25 }, // C5
+      { freq: 440, dur: 0.25 }, // A4
+      { freq: 392, dur: 0.25 }, // G4
+      { freq: 349, dur: 0.25 }, // F4
+    ],
+    fast: [
+      { freq: 698, dur: 0.15 }, // F5
+      { freq: 880, dur: 0.15 }, // A5
+      { freq: 1047, dur: 0.15 }, // C6
+      { freq: 1319, dur: 0.15 }, // E6
+      { freq: 1047, dur: 0.15 }, // C6
+      { freq: 880, dur: 0.15 }, // A5
+      { freq: 784, dur: 0.15 }, // G5
+      { freq: 698, dur: 0.15 }, // F5
+    ]
+  }
+];
 
 function startBackgroundMusic(sc) {
   if (!sc || !sc.sound || !sc.sound.context) return;
   const ctx = sc.sound.context;
   if (!ctx.createOscillator || !ctx.createGain) return;
   
-  // Melodía normal (velocidad baja/media)
-  const normalNotes = [
-    { freq: 523, dur: 0.25 }, // C5
-    { freq: 659, dur: 0.25 }, // E5
-    { freq: 784, dur: 0.25 }, // G5
-    { freq: 880, dur: 0.25 }, // A5
-    { freq: 784, dur: 0.25 }, // G5
-    { freq: 659, dur: 0.25 }, // E5
-    { freq: 587, dur: 0.25 }, // D5
-    { freq: 523, dur: 0.25 }, // C5
-  ];
-  
-  // Melodía rápida e intensa (alta velocidad)
-  const fastNotes = [
-    { freq: 784, dur: 0.15 }, // G5
-    { freq: 880, dur: 0.15 }, // A5
-    { freq: 988, dur: 0.15 }, // B5
-    { freq: 1047, dur: 0.15 }, // C6
-    { freq: 988, dur: 0.15 }, // B5
-    { freq: 1047, dur: 0.15 }, // C6
-    { freq: 1175, dur: 0.15 }, // D6
-    { freq: 1047, dur: 0.15 }, // C6
-    { freq: 988, dur: 0.15 }, // B5
-    { freq: 880, dur: 0.15 }, // A5
-    { freq: 988, dur: 0.15 }, // B5
-    { freq: 784, dur: 0.15 }, // G5
-  ];
+  // Seleccionar melodía aleatoria al inicio
+  const melody = melodies[selectedMelody];
   
   let currentTime = ctx.currentTime;
   
@@ -1484,8 +2531,8 @@ function startBackgroundMusic(sc) {
     // Determinar qué melodía usar según la velocidad
     const speed = bike ? bike.vx : 100;
     const isFast = speed > 350;
-    const notes = isFast ? fastNotes : normalNotes;
-    const tempo = isFast ? 0.9 : 1.0; // Más rápido cuando va rápido
+    const notes = isFast ? melody.fast : melody.normal;
+    const tempo = isFast ? 0.9 : 1;
     
     for (let i = 0; i < notes.length; i++) {
       const note = notes[i];
@@ -1555,6 +2602,14 @@ function startBackgroundMusic(sc) {
   playLoop();
 }
 
+// Detener música de fondo
+function stopBackgroundMusic() {
+  if (musicLoopTimer) {
+    clearTimeout(musicLoopTimer);
+    musicLoopTimer = null;
+  }
+}
+
 // Sonido corto para jueces - tipo "tuuun"
 function playJudgeSound(sc) {
   if (!sc || !sc.sound || !sc.sound.context) return;
@@ -1585,11 +2640,30 @@ function drawBackground() {
     // Cielo
     const h = 600;
     
-    // Sol
-    g.fillStyle(0xffdd44, 1);
-    g.fillCircle(650, 80, 35);
-    g.fillStyle(0xffee88, 0.3);
-    g.fillCircle(650, 80, 50);
+    // Sol/Luna según la hora del día
+    if (timeOfDay === 'day') {
+      // Sol brillante
+      g.fillStyle(0xffdd44, 1);
+      g.fillCircle(650, 80, 35);
+      g.fillStyle(0xffee88, 0.3);
+      g.fillCircle(650, 80, 50);
+    } else if (timeOfDay === 'afternoon') {
+      // Sol atardecer (más naranja y bajo)
+      const sunY = 80 + (gameTime - dayDuration) / dayDuration * 100; // Baja el sol
+      g.fillStyle(0xff8844, 0.9);
+      g.fillCircle(650, sunY, 40);
+      g.fillStyle(0xff9955, 0.3);
+      g.fillCircle(650, sunY, 60);
+    } else {
+      // Luna y estrellas
+      g.fillStyle(0xddddff, 0.9);
+      g.fillCircle(650, 80, 30);
+      g.fillStyle(0xffffff, 0.2);
+      g.fillCircle(655, 75, 25); // Brillo
+      
+      // Estrellas titilantes
+      drawStarsInSky();
+    }
     
     // Nubes
     drawClouds();
@@ -1598,7 +2672,8 @@ function drawBackground() {
     drawColiseum();
     
     // Montaña lejana (opcional, más sutil)
-    g.fillStyle(0x9ac4ff, 0.3);
+    const mountainAlpha = timeOfDay === 'night' ? 0.15 : 0.3;
+    g.fillStyle(0x9ac4ff, mountainAlpha);
     g.beginPath();
     g.moveTo(0, h);
     for (let x = 0; x <= 800; x += 10) {
@@ -1609,6 +2684,20 @@ function drawBackground() {
     g.closePath();
     g.fillPath();
   }
+
+// Estrellas en el cielo nocturno
+function drawStarsInSky() {
+  // Estrellas fijas basadas en posición (procedurales)
+  for (let i = 0; i < 50; i++) {
+    const x = (i * 167.3) % 800; // Posición pseudo-aleatoria pero consistente
+    const y = (i * 89.7) % 300;
+    const size = 1 + (i % 3);
+    const twinkle = Math.sin(gameTime * 2 + i) * 0.3 + 0.7; // Titileo
+    
+    g.fillStyle(0xffffff, twinkle * 0.8);
+    g.fillCircle(x, y, size);
+  }
+}
 
 // Nubes y partículas de movimiento
 function initClouds() {
@@ -1865,6 +2954,33 @@ function drawTrack() {
       g.lineTo(xp, yb);
       g.strokePath();
     }
+    
+    // Dibujar zona de aterrizaje si existe
+    if (r.landingZone) {
+      const lzX = r.landingZone.x - track.scroll;
+      const lzW = r.landingZone.w;
+      if (lzX + lzW > 0 && lzX < 800) {
+        // Fondo verde brillante si no ha sido cobrado, amarillo si ya fue usado
+        const lzColor = r.landingZone.collected ? 0x888888 : 0x00ff00;
+        const lzAlpha = r.landingZone.collected ? 0.3 : 0.6;
+        
+        g.fillStyle(lzColor, lzAlpha);
+        g.fillRect(lzX, yb - 8, lzW, 8);
+        
+        // Líneas diagonales (chevrons) para efecto visual
+        g.lineStyle(2, 0xffff00, lzAlpha);
+        for (let cx = 0; cx < lzW; cx += 15) {
+          g.beginPath();
+          g.moveTo(lzX + cx, yb - 8);
+          g.lineTo(lzX + cx + 8, yb);
+          g.strokePath();
+        }
+        
+        // Borde de la zona
+        g.lineStyle(2, 0xffffff, r.landingZone.collected ? 0.2 : 0.8);
+        g.strokeRect(lzX, yb - 8, lzW, 8);
+      }
+    }
   }
 
   // Línea discontinua central estilo rally - color tierra clara
@@ -1872,6 +2988,213 @@ function drawTrack() {
   const baseY = track.base - 6;
   for (let x = 0; x <= 840; x += 40) {
     g.fillRect(x, baseY, 20, 3);
+  }
+}
+
+// Dibujar drones (obstáculos aéreos)
+function drawDrones() {
+  for (let d of drones) {
+    const screenX = d.x - track.scroll;
+    if (screenX < -50 || screenX > 850) continue; // Fuera de pantalla
+    
+    // Cuerpo del drone (negro/gris oscuro)
+    g.fillStyle(0x333333, 1);
+    g.fillRect(screenX - 15, d.y - 8, 30, 16);
+    
+    // Centro (luz LED roja)
+    g.fillStyle(0xff0000, 1);
+    g.fillCircle(screenX, d.y, 4);
+    
+    // Brazos del drone (4 brazos)
+    g.lineStyle(3, 0x444444, 1);
+    const armLen = 18;
+    // Brazo superior izquierdo
+    g.beginPath();
+    g.moveTo(screenX, d.y);
+    g.lineTo(screenX - armLen, d.y - armLen);
+    g.strokePath();
+    // Brazo superior derecho
+    g.beginPath();
+    g.moveTo(screenX, d.y);
+    g.lineTo(screenX + armLen, d.y - armLen);
+    g.strokePath();
+    // Brazo inferior izquierdo
+    g.beginPath();
+    g.moveTo(screenX, d.y);
+    g.lineTo(screenX - armLen, d.y + armLen);
+    g.strokePath();
+    // Brazo inferior derecho
+    g.beginPath();
+    g.moveTo(screenX, d.y);
+    g.lineTo(screenX + armLen, d.y + armLen);
+    g.strokePath();
+    
+    // Hélices (animadas) en cada extremo
+    const propAngle = d.propPhase;
+    const propLen = 8;
+    
+    // Hélice 1 (superior izquierda)
+    drawPropeller(screenX - armLen, d.y - armLen, propAngle, propLen);
+    // Hélice 2 (superior derecha)
+    drawPropeller(screenX + armLen, d.y - armLen, propAngle, propLen);
+    // Hélice 3 (inferior izquierda)
+    drawPropeller(screenX - armLen, d.y + armLen, propAngle, propLen);
+    // Hélice 4 (inferior derecha)
+    drawPropeller(screenX + armLen, d.y + armLen, propAngle, propLen);
+  }
+}
+
+// Dibujar una hélice de drone
+function drawPropeller(x, y, angle, len) {
+  g.lineStyle(2, 0x00aaff, 0.8);
+  g.beginPath();
+  g.moveTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+  g.lineTo(x - Math.cos(angle) * len, y - Math.sin(angle) * len);
+  g.strokePath();
+}
+
+// Dibujar aros (bonus de puntos)
+function drawHoops() {
+  for (let h of hoops) {
+    const screenX = h.x - track.scroll;
+    if (screenX < -100 || screenX > 900) continue; // Fuera de pantalla
+    
+    // Poste de soporte (vertical)
+    g.lineStyle(6, 0x666666, 1);
+    g.beginPath();
+    g.moveTo(screenX, h.y);
+    g.lineTo(screenX, track.base);
+    g.strokePath();
+    
+    // Base del poste
+    g.fillStyle(0x555555, 1);
+    g.fillRect(screenX - 12, track.base - 8, 24, 8);
+    
+    // Aro circular - diferente para aros especiales
+    const isSpecial = h.isSpecial || false;
+    let color, alpha, lineWidth;
+    
+    if (h.collected) {
+      color = 0x00ff00; // Verde si ya pasó
+      alpha = 0.5;
+      lineWidth = 8;
+    } else if (isSpecial) {
+      color = 0xff00ff; // Magenta para aros especiales (más puntos)
+      alpha = 1;
+      lineWidth = 10; // Más grueso
+    } else {
+      color = 0xffaa00; // Naranja para aros normales
+      alpha = 1;
+      lineWidth = 8;
+    }
+    
+    g.lineStyle(lineWidth, color, alpha);
+    g.strokeCircle(screenX, h.y, h.radius);
+    
+    // Círculo interior (área de bonus) - con efecto pulsante para especiales
+    if (!h.collected) {
+      const innerAlpha = isSpecial ? 0.5 + Math.sin(Date.now() / 200) * 0.2 : 0.3;
+      g.lineStyle(2, 0xffff00, innerAlpha);
+      g.strokeCircle(screenX, h.y, h.radius - 10);
+    }
+    
+    // Indicador de puntos
+    if (!h.collected) {
+      const points = h.points || 500;
+      const fontSize = isSpecial ? '20px' : '16px';
+      const textColor = isSpecial ? '#FF00FF' : '#FFD700';
+      
+      const bonusText = scene.add.text(screenX, h.y, '+' + points, {
+        fontFamily: 'Arial',
+        fontSize: fontSize,
+        color: textColor,
+        stroke: '#000',
+        strokeThickness: 3
+      });
+      bonusText.setOrigin(0.5);
+      scene.time.delayedCall(16, () => bonusText.destroy());
+    }
+  }
+}
+
+function drawSpikes() {
+  for (let sp of spikes) {
+    const screenX = sp.x - track.scroll;
+    if (screenX < -100 || screenX > 900) continue; // Fuera de pantalla
+    
+    const spikeHeight = 20; // Altura de las púas
+    const spikeBase = track.base;
+    const spikeTop = spikeBase - spikeHeight;
+    const halfWidth = sp.w / 2;
+    
+    // Dibujar púas triangulares en gris oscuro/plateado
+    g.fillStyle(0x555555, 1);
+    g.lineStyle(2, 0x333333, 1);
+    
+    // Dibujar varios picos en el ancho de la púa
+    const numPeaks = Math.floor(sp.w / 8); // Un pico cada 8px
+    for (let i = 0; i < numPeaks; i++) {
+      const peakX = screenX - halfWidth + (i * sp.w / numPeaks) + (sp.w / numPeaks / 2);
+      
+      // Triángulo
+      g.beginPath();
+      g.moveTo(peakX - 4, spikeBase); // Base izquierda
+      g.lineTo(peakX, spikeTop); // Punta
+      g.lineTo(peakX + 4, spikeBase); // Base derecha
+      g.closePath();
+      g.fillPath();
+      g.strokePath();
+    }
+  }
+}
+
+// Dibujar obstáculos en el suelo
+function drawObstacles() {
+  for (let o of obstacles) {
+    const screenX = o.x - track.scroll;
+    if (screenX + o.w < -50 || screenX > 850) continue; // Fuera de pantalla
+    
+    const obstY = track.base - o.h;
+    
+    if (o.type === 'car') {
+      // Dibujar un carro simple
+      // Carrocería
+      g.fillStyle(0x4444ff, 1);
+      g.fillRect(screenX, obstY, o.w, o.h * 0.6);
+      
+      // Techo
+      g.fillStyle(0x6666ff, 1);
+      g.fillRect(screenX + o.w * 0.2, obstY - o.h * 0.4, o.w * 0.6, o.h * 0.4);
+      
+      // Ventanas
+      g.fillStyle(0x88ccff, 0.7);
+      g.fillRect(screenX + o.w * 0.25, obstY - o.h * 0.35, o.w * 0.2, o.h * 0.25);
+      g.fillRect(screenX + o.w * 0.55, obstY - o.h * 0.35, o.w * 0.2, o.h * 0.25);
+      
+      // Ruedas
+      g.fillStyle(0x222222, 1);
+      const wheelR = o.h * 0.25;
+      g.fillCircle(screenX + o.w * 0.25, track.base, wheelR);
+      g.fillCircle(screenX + o.w * 0.75, track.base, wheelR);
+    } else {
+      // Plataforma elevada (tipo rampa plana)
+      g.fillStyle(0x8b4513, 1); // Marrón
+      g.fillRect(screenX, obstY, o.w, o.h);
+      
+      // Borde superior más claro
+      g.fillStyle(0xa0522d, 1);
+      g.fillRect(screenX, obstY, o.w, 4);
+      
+      // Líneas de textura
+      g.lineStyle(1, 0x654321, 0.5);
+      for (let i = 0; i < 3; i++) {
+        const y = obstY + (i + 1) * (o.h / 4);
+        g.beginPath();
+        g.moveTo(screenX, y);
+        g.lineTo(screenX + o.w, y);
+        g.strokePath();
+      }
+    }
   }
 }
 
@@ -1946,21 +3269,35 @@ function drawRider(cx, cy, riderAng, handleX, handleY) {
     y: cy + (x * sinA + y * cosA)
   });
   
-  // Casco con visera (orientación)
-  const helmetPos = rotate(0, 0);
-  g.fillStyle(0x0066cc, 1); // casco azul
-  g.fillCircle(helmetPos.x, helmetPos.y, 8);
+  // PIERNAS (dibujar primero para que estén detrás)
+  const legL1 = rotate(-5, 26);
+  const legL2 = rotate(-7, 42);
+  const legR1 = rotate(5, 26);
+  const legR2 = rotate(7, 42);
   
-  // Visera (frente del casco) - apunta hacia adelante relativo al piloto
-  const visorPos = rotate(5, 0);
-  g.fillStyle(0x333333, 0.7);
-  g.fillCircle(visorPos.x, visorPos.y, 4);
+  // Pantalones (azul oscuro)
+  g.lineStyle(7, 0x1a1a3a, 1);
+  g.beginPath();
+  g.moveTo(legL1.x, legL1.y);
+  g.lineTo(legL2.x, legL2.y);
+  g.strokePath();
+  g.beginPath();
+  g.moveTo(legR1.x, legR1.y);
+  g.lineTo(legR2.x, legR2.y);
+  g.strokePath();
   
-  // Cuerpo del piloto (camiseta) - rectángulo rotado
+  // Botas (negras)
+  g.fillStyle(0x000000, 1);
+  g.fillCircle(legL2.x, legL2.y, 4);
+  g.fillCircle(legR2.x, legR2.y, 4);
+  
+  // CUERPO (torso con chaqueta de cuero)
   const bodyCorners = [
-    rotate(-8, 8), rotate(8, 8), rotate(8, 26), rotate(-8, 26)
+    rotate(-9, 8), rotate(9, 8), rotate(9, 28), rotate(-9, 28)
   ];
-  g.fillStyle(0xffcc00, 1); // amarillo
+  
+  // Chaqueta de cuero (negro con detalles)
+  g.fillStyle(0x1a1a1a, 1);
   g.beginPath();
   g.moveTo(bodyCorners[0].x, bodyCorners[0].y);
   for (let i = 1; i < bodyCorners.length; i++) {
@@ -1969,13 +3306,34 @@ function drawRider(cx, cy, riderAng, handleX, handleY) {
   g.closePath();
   g.fillPath();
   
-  // Brazos extendidos
-  const armL1 = rotate(-6, 10);
-  const armL2 = rotate(-15, 25);
-  const armR1 = rotate(6, 10);
-  const armR2 = rotate(15, 25);
+  // Detalles de la chaqueta (cremallera y líneas)
+  g.lineStyle(2, 0xff3333, 0.8);
+  const zipTop = rotate(0, 8);
+  const zipBot = rotate(0, 28);
+  g.beginPath();
+  g.moveTo(zipTop.x, zipTop.y);
+  g.lineTo(zipBot.x, zipBot.y);
+  g.strokePath();
   
-  g.lineStyle(5, 0xffd19c, 1);
+  // Líneas laterales de la chaqueta
+  g.lineStyle(1, 0x444444, 1);
+  g.beginPath();
+  g.moveTo(rotate(-7, 10).x, rotate(-7, 10).y);
+  g.lineTo(rotate(-7, 26).x, rotate(-7, 26).y);
+  g.strokePath();
+  g.beginPath();
+  g.moveTo(rotate(7, 10).x, rotate(7, 10).y);
+  g.lineTo(rotate(7, 26).x, rotate(7, 26).y);
+  g.strokePath();
+  
+  // BRAZOS (con mangas de chaqueta)
+  const armL1 = rotate(-7, 12);
+  const armL2 = rotate(-16, 28);
+  const armR1 = rotate(7, 12);
+  const armR2 = rotate(16, 28);
+  
+  // Mangas de chaqueta (negras)
+  g.lineStyle(6, 0x1a1a1a, 1);
   g.beginPath();
   g.moveTo(armL1.x, armL1.y);
   g.lineTo(armL2.x, armL2.y);
@@ -1985,21 +3343,61 @@ function drawRider(cx, cy, riderAng, handleX, handleY) {
   g.lineTo(armR2.x, armR2.y);
   g.strokePath();
   
-  // Piernas
-  const legL1 = rotate(-4, 26);
-  const legL2 = rotate(-6, 40);
-  const legR1 = rotate(4, 26);
-  const legR2 = rotate(6, 40);
+  // Guantes (rojos)
+  g.fillStyle(0xff3333, 1);
+  g.fillCircle(armL2.x, armL2.y, 4);
+  g.fillCircle(armR2.x, armR2.y, 4);
   
-  g.lineStyle(5, 0x0033aa, 1);
+  // Detalles de guantes (dedos/líneas)
+  g.lineStyle(1, 0xaa0000, 1);
+  const gloveL = rotate(-16, 28);
+  const gloveR = rotate(16, 28);
   g.beginPath();
-  g.moveTo(legL1.x, legL1.y);
-  g.lineTo(legL2.x, legL2.y);
+  g.moveTo(gloveL.x - 2, gloveL.y);
+  g.lineTo(gloveL.x + 2, gloveL.y);
   g.strokePath();
   g.beginPath();
-  g.moveTo(legR1.x, legR1.y);
-  g.lineTo(legR2.x, legR2.y);
+  g.moveTo(gloveR.x - 2, gloveR.y);
+  g.lineTo(gloveR.x + 2, gloveR.y);
   g.strokePath();
+  
+  // CASCO (más detallado)
+  const helmetPos = rotate(0, 0);
+  
+  // Base del casco (azul metálico con gradiente simulado)
+  g.fillStyle(0x0066ff, 1);
+  g.fillCircle(helmetPos.x, helmetPos.y, 9);
+  
+  // Brillo superior del casco
+  const shinePos = rotate(-2, -3);
+  g.fillStyle(0x66aaff, 0.6);
+  g.fillCircle(shinePos.x, shinePos.y, 3);
+  
+  // Visera (negra con reflejo)
+  const visorPos = rotate(6, 0);
+  g.fillStyle(0x000000, 0.9);
+  g.fillEllipse(visorPos.x, visorPos.y, 5, 3);
+  
+  // Reflejo en la visera
+  const visorShine = rotate(7, -1);
+  g.fillStyle(0x6699ff, 0.4);
+  g.fillEllipse(visorShine.x, visorShine.y, 2, 1);
+  
+  // Franja decorativa del casco
+  g.lineStyle(2, 0xff3333, 1);
+  const stripeL = rotate(-4, 2);
+  const stripeR = rotate(4, 2);
+  g.beginPath();
+  g.moveTo(stripeL.x, stripeL.y);
+  g.lineTo(stripeR.x, stripeR.y);
+  g.strokePath();
+  
+  // Ventilación del casco (detalles pequeños)
+  g.fillStyle(0x333333, 1);
+  const ventPos1 = rotate(2, 5);
+  const ventPos2 = rotate(4, 6);
+  g.fillCircle(ventPos1.x, ventPos1.y, 1);
+  g.fillCircle(ventPos2.x, ventPos2.y, 1);
 }
 
 function drawBoostEffect(x, y, ang) {
