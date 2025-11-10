@@ -1,4 +1,4 @@
 {
   "game_name": "Broke Bonez",
-  "description": "Juego arcade de motocross con acrobacias inspirado en Un Show Más. Modo Competición: 1 jugador, 1 vida, máxima puntuación y tabla de líderes. Modo 1vs1: 2 jugadores, 3 vidas cada uno. Acelera con ESPACIO, inclina con ←/→, y realiza trucos con combos J+K, K+L, J+L, U+I, J+U en el aire."
+  "description": "Extreme motorcycle stunt racing arcade game! Competition Mode: 1 player, TOP 10 leaderboard, survive as long as possible. 1vs1 Mode: 2 players, 3 lives each, best rider wins. Features dynamic day/night cycle, wind physics, crowd pressure timer, ground spikes, aerial drones, cars, and bonus hoops. Boost with SPACE, tilt with arrows, jump with O, perform tactical tricks: J+K (dash left), K+L (dash right), J+L (ground slam), K+I (sky jump). Points: flips (50), landings (50), zones (200), hoops (500-1000). Don't let the crowd get bored for 7 seconds or GAME OVER!"
 }
